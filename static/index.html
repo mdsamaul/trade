@@ -1,0 +1,1771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quotex Autonomous Paper-Trading & Self-Optimizing Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&family=Orbitron:wght@600;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #07090e;
+      --bg-card: rgba(14, 18, 28, 0.85);
+      --bg-card-hover: rgba(20, 26, 40, 0.95);
+      --border-color: rgba(36, 47, 72, 0.8);
+      --border-glow: rgba(0, 240, 255, 0.25);
+      
+      --neon-cyan: #00f0ff;
+      --neon-green: #00ff88;
+      --neon-red: #ff3366;
+      --neon-gold: #ffb800;
+      --neon-purple: #9d4edd;
+      
+      --text-main: #f0f4fc;
+      --text-muted: #8391a8;
+      --text-dim: #4b586e;
+      
+      --call-color: #00ff88;
+      --put-color: #ff3366;
+      --skip-color: #ffb800;
+      
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(0, 240, 255, 0.04) 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, rgba(157, 78, 221, 0.04) 0%, transparent 40%),
+        linear-gradient(180deg, #07090e 0%, #0a0d14 100%);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .font-mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .font-brand {
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 0.5px;
+    }
+
+    /* Top Navigation Bar */
+    header {
+      background: rgba(10, 14, 22, 0.9);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-color);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-icon {
+      width: 38px;
+      height: 38px;
+      background: linear-gradient(135deg, #00f0ff, #00ff88);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 900;
+      color: #07090e;
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.4);
+    }
+
+    .logo-title h1 {
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: 1px;
+      background: linear-gradient(90deg, #ffffff, #00f0ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .logo-title p {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      user-select: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #00f0ff, #00a8ff);
+      color: #07090e;
+      border-color: #00f0ff;
+      box-shadow: 0 0 12px rgba(0, 240, 255, 0.3);
+    }
+
+    .btn-primary:hover {
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.6);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: rgba(26, 35, 52, 0.8);
+      color: var(--text-main);
+      border-color: var(--border-color);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(38, 50, 74, 0.9);
+      border-color: var(--neon-cyan);
+    }
+
+    .btn-success {
+      background: linear-gradient(135deg, #00ff88, #00b862);
+      color: #07090e;
+      font-weight: 700;
+    }
+
+    .btn-danger {
+      background: rgba(255, 51, 102, 0.15);
+      border-color: rgba(255, 51, 102, 0.5);
+      color: var(--neon-red);
+    }
+
+    .btn-danger:hover {
+      background: rgba(255, 51, 102, 0.3);
+    }
+
+    .btn-icon {
+      padding: 8px;
+      border-radius: var(--radius-sm);
+      background: rgba(26, 35, 52, 0.8);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+    }
+
+    .btn-icon:hover {
+      color: var(--neon-cyan);
+      border-color: var(--neon-cyan);
+    }
+
+    /* Main Container */
+    .dashboard-container {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Target Status Banner */
+    .status-banner {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    .status-banner::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 4px;
+      height: 100%;
+      background: var(--neon-gold);
+      transition: background 0.3s;
+    }
+
+    .status-banner.achieved::before {
+      background: var(--neon-green);
+      box-shadow: 0 0 15px var(--neon-green);
+    }
+
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.82rem;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      background: rgba(255, 184, 0, 0.15);
+      border: 1px solid rgba(255, 184, 0, 0.4);
+      color: var(--neon-gold);
+      animation: pulse-amber 2s infinite ease-in-out;
+    }
+
+    .status-pill.achieved {
+      background: rgba(0, 255, 136, 0.2);
+      border: 1px solid var(--neon-green);
+      color: var(--neon-green);
+      animation: glow-green 1.5s infinite alternate ease-in-out;
+      box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
+    }
+
+    @keyframes pulse-amber {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    @keyframes glow-green {
+      from { box-shadow: 0 0 5px rgba(0, 255, 136, 0.3); }
+      to { box-shadow: 0 0 18px rgba(0, 255, 136, 0.8); }
+    }
+
+    .status-desc {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+
+    .status-desc strong {
+      color: var(--text-main);
+    }
+
+    /* Rolling 5 Visualizer */
+    .rolling-display {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .rolling-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+    }
+
+    .rolling-badges {
+      display: flex;
+      gap: 6px;
+    }
+
+    .roll-pill {
+      width: 34px;
+      height: 34px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 0.85rem;
+      border: 1px solid var(--border-color);
+      background: rgba(20, 26, 40, 0.6);
+      color: var(--text-dim);
+      transition: all 0.3s;
+    }
+
+    .roll-pill.win {
+      background: rgba(0, 255, 136, 0.15);
+      border-color: var(--neon-green);
+      color: var(--neon-green);
+      box-shadow: 0 0 8px rgba(0, 255, 136, 0.3);
+    }
+
+    .roll-pill.loss {
+      background: rgba(255, 51, 102, 0.15);
+      border-color: var(--neon-red);
+      color: var(--neon-red);
+      box-shadow: 0 0 8px rgba(255, 51, 102, 0.3);
+    }
+
+    .roll-pill.draw {
+      background: rgba(255, 184, 0, 0.15);
+      border-color: var(--neon-gold);
+      color: var(--neon-gold);
+    }
+
+    .rolling-rate-badge {
+      font-size: 1.1rem;
+      font-weight: 800;
+      padding: 4px 12px;
+      border-radius: var(--radius-sm);
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      color: var(--neon-cyan);
+    }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .stat-card:hover {
+      border-color: var(--border-glow);
+      transform: translateY(-2px);
+    }
+
+    .stat-title {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .stat-value {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: var(--text-main);
+    }
+
+    .stat-sub {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .badge-win { color: var(--neon-green); }
+    .badge-loss { color: var(--neon-red); }
+
+    /* Middle Layout: Video/Canvas Feed + AI Inspector */
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 1100px) {
+      .workspace-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Video & Canvas Capture Card */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-header {
+      padding: 14px 20px;
+      background: rgba(16, 22, 34, 0.7);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .card-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-body {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Video Feed Container */
+    .stream-container {
+      position: relative;
+      width: 100%;
+      height: 380px;
+      background: #000;
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #streamVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: none;
+    }
+
+    #streamCanvas {
+      display: none;
+    }
+
+    .stream-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 20px;
+    }
+
+    .stream-placeholder svg {
+      width: 52px;
+      height: 52px;
+      color: var(--text-dim);
+    }
+
+    /* Auto-Cycle Controls Bar */
+    .controls-strip {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: rgba(12, 16, 26, 0.6);
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-color);
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .control-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    select, input[type="text"], input[type="number"] {
+      background: rgba(20, 26, 40, 0.9);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 0.82rem;
+      font-family: inherit;
+      outline: none;
+    }
+
+    select:focus, input:focus {
+      border-color: var(--neon-cyan);
+    }
+
+    /* Countdown Bar */
+    .countdown-widget {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .countdown-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 6px;
+      background: rgba(26, 35, 52, 0.6);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      transition: width 1s linear;
+    }
+
+    /* Active Trade Floating HUD */
+    .active-trade-box {
+      background: rgba(20, 26, 42, 0.9);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .active-trade-box.active {
+      display: flex;
+      border-color: var(--neon-cyan);
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);
+    }
+
+    .at-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .dir-tag {
+      font-weight: 800;
+      font-size: 0.85rem;
+      padding: 3px 10px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+    }
+
+    .dir-tag.CALL {
+      background: rgba(0, 255, 136, 0.2);
+      color: var(--call-color);
+      border: 1px solid var(--call-color);
+    }
+
+    .dir-tag.PUT {
+      background: rgba(255, 51, 102, 0.2);
+      color: var(--put-color);
+      border: 1px solid var(--put-color);
+    }
+
+    /* AI Decision & Vision Inspector Card */
+    .ai-decision-card {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .decision-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      border-radius: var(--radius-sm);
+      background: rgba(16, 22, 34, 0.8);
+      border: 1px solid var(--border-color);
+    }
+
+    .decision-main {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .decision-badge {
+      font-size: 1.4rem;
+      font-weight: 900;
+      letter-spacing: 1px;
+    }
+
+    .badge-call { color: var(--call-color); }
+    .badge-put { color: var(--put-color); }
+    .badge-skip { color: var(--skip-color); }
+
+    .confidence-meter {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+
+    .confidence-val {
+      font-size: 1.3rem;
+      font-weight: 800;
+      color: var(--neon-cyan);
+    }
+
+    .cropped-preview-box {
+      width: 100%;
+      height: 190px;
+      background: #000;
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .cropped-preview-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .preview-overlay-tag {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    .ai-rationale-box {
+      background: rgba(12, 16, 26, 0.6);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      padding: 14px;
+      font-size: 0.85rem;
+      line-height: 1.45;
+      color: var(--text-main);
+    }
+
+    .ai-traits {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      font-size: 0.8rem;
+    }
+
+    .trait-item {
+      background: rgba(20, 26, 40, 0.6);
+      padding: 8px 12px;
+      border-radius: 4px;
+      display: flex;
+      justify-content: space-between;
+      border: 1px solid rgba(36, 47, 72, 0.5);
+    }
+
+    .trait-label { color: var(--text-muted); }
+    .trait-val { font-weight: 700; color: var(--text-main); }
+
+    /* Trade Ledger Table */
+    .ledger-section {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+
+    .ledger-table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.84rem;
+    }
+
+    th {
+      background: rgba(16, 22, 34, 0.8);
+      color: var(--text-muted);
+      font-weight: 600;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-color);
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      letter-spacing: 0.5px;
+    }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(36, 47, 72, 0.4);
+      color: var(--text-main);
+    }
+
+    tr:hover td {
+      background: rgba(25, 33, 50, 0.4);
+    }
+
+    .pill-win {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: rgba(0, 255, 136, 0.15);
+      color: var(--neon-green);
+      font-weight: 700;
+      border: 1px solid rgba(0, 255, 136, 0.3);
+    }
+
+    .pill-loss {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: rgba(255, 51, 102, 0.15);
+      color: var(--neon-red);
+      font-weight: 700;
+      border: 1px solid rgba(255, 51, 102, 0.3);
+    }
+
+    .pill-draw {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: rgba(255, 184, 0, 0.15);
+      color: var(--neon-gold);
+      font-weight: 700;
+      border: 1px solid rgba(255, 184, 0, 0.3);
+    }
+
+    /* Modal for Config */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(5px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+    }
+
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal-card {
+      background: #0f1420;
+      border: 1px solid var(--neon-cyan);
+      box-shadow: 0 0 30px rgba(0, 240, 255, 0.2);
+      border-radius: var(--radius-md);
+      width: 90%;
+      max-width: 540px;
+      overflow: hidden;
+    }
+
+    .modal-header {
+      padding: 16px 20px;
+      background: rgba(20, 26, 40, 0.9);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-body {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .form-group input, .form-group select {
+      width: 100%;
+      padding: 8px 12px;
+    }
+
+    .modal-footer {
+      padding: 14px 20px;
+      background: rgba(16, 22, 34, 0.9);
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header>
+    <div class="logo-group">
+      <div class="logo-icon font-brand">Q</div>
+      <div class="logo-title">
+        <h1 class="font-brand">QUOTEX VISION AGENT</h1>
+        <p>Autonomous Paper-Trading & Self-Optimizing Engine</p>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button class="btn btn-icon" id="soundToggleBtn" title="Toggle Audio Chimes">
+        <span id="soundIcon">🔊</span>
+      </button>
+      <button class="btn btn-secondary" id="configBtn">
+        ⚙️ Settings & API
+      </button>
+      <button class="btn btn-danger" id="resetSessionBtn">
+        🔄 Reset Session
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="dashboard-container">
+
+    <!-- Target Benchmark Status Banner -->
+    <section class="status-banner" id="statusBanner">
+      <div class="status-left">
+        <div class="status-pill" id="statusPill">
+          <span id="statusIcon">⚡</span>
+          <span id="statusBadgeText">TRAINING / PRACTICING</span>
+        </div>
+        <div class="status-desc" id="statusDescription">
+          Collecting frames. Evaluating candle probability against rolling accuracy target (>= 80%).
+        </div>
+      </div>
+
+      <div class="rolling-display">
+        <span class="rolling-label">Rolling 5 Trades:</span>
+        <div class="rolling-badges" id="rollingBadges">
+          <div class="roll-pill font-mono">-</div>
+          <div class="roll-pill font-mono">-</div>
+          <div class="roll-pill font-mono">-</div>
+          <div class="roll-pill font-mono">-</div>
+          <div class="roll-pill font-mono">-</div>
+        </div>
+        <div class="rolling-rate-badge font-mono" id="rollingRateBadge">0.0%</div>
+      </div>
+    </section>
+
+    <!-- Key Metrics Grid -->
+    <section class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-title">
+          <span>Virtual Balance</span>
+          <span>💼</span>
+        </div>
+        <div class="stat-value font-mono" id="statBalance">$10,000.00</div>
+        <div class="stat-sub font-mono" id="statPnl">PnL: +$0.00</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-title">
+          <span>Total Trades</span>
+          <span>📊</span>
+        </div>
+        <div class="stat-value font-mono" id="statTotalTrades">0</div>
+        <div class="stat-sub" id="statRecord">Wins: 0 | Losses: 0 | Draws: 0</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-title">
+          <span>All-Time Win Rate</span>
+          <span>🎯</span>
+        </div>
+        <div class="stat-value font-mono" id="statWinRate">0.0%</div>
+        <div class="stat-sub">Target Benchmark: 80% Win Rate</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-title">
+          <span>Strategy Strictness</span>
+          <span>🛡️</span>
+        </div>
+        <div class="stat-value font-mono" id="statStrictness">Level 2</div>
+        <div class="stat-sub" id="statStrictnessDesc">Balanced / Standard</div>
+      </div>
+    </section>
+
+    <!-- Center Workspace: Video Screen Capture + AI Decision Inspector -->
+    <div class="workspace-grid">
+
+      <!-- Left Column: Screen Share & Automation Controller -->
+      <section class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>📺</span>
+            <span>Live Quotex Chart Ingestion</span>
+          </div>
+          <div>
+            <button class="btn btn-primary" id="shareScreenBtn">
+              📡 Share Quotex Tab
+            </button>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <!-- Video Stream & Offscreen Canvas -->
+          <div class="stream-container" id="streamContainer">
+            <video id="streamVideo" autoplay playsinline muted></video>
+            <canvas id="streamCanvas"></canvas>
+            <div class="stream-placeholder" id="streamPlaceholder">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+              </svg>
+              <div>
+                <strong>No Active Video Stream</strong><br>
+                Click <em>"Share Quotex Tab"</em> above and select your Quotex demo chart window.
+              </div>
+            </div>
+          </div>
+
+          <!-- Active Paper Trade Widget (When a trade is in progress) -->
+          <div class="active-trade-box" id="activeTradeBox">
+            <div class="at-header">
+              <span class="font-mono" style="font-size: 0.85rem; color: var(--text-muted);">ACTIVE PAPER TRADE</span>
+              <span class="dir-tag font-mono" id="atDirection">CALL</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+              <div>
+                <span style="font-size: 0.75rem; color: var(--text-muted);">ENTRY PRICE:</span>
+                <span class="font-mono" style="font-size: 1.1rem; font-weight: 700;" id="atEntryPrice">1.08450</span>
+              </div>
+              <div>
+                <span style="font-size: 0.75rem; color: var(--text-muted);">EXPIRY IN:</span>
+                <span class="font-mono" style="font-size: 1.1rem; font-weight: 800; color: var(--neon-cyan);" id="atCountdown">60s</span>
+              </div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary" style="flex: 1; padding: 6px;" id="forceVerifyBtn">
+                ⚡ Force Verify Outcome Now
+              </button>
+            </div>
+          </div>
+
+          <!-- Candle Countdown Bar -->
+          <div class="countdown-widget">
+            <div class="countdown-header">
+              <span>Next Candle Cycle Trigger:</span>
+              <span class="font-mono" id="cycleSecondsRemaining">60s</span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" id="cycleProgressBar"></div>
+            </div>
+          </div>
+
+          <!-- Automation Strip -->
+          <div class="controls-strip">
+            <div class="control-group">
+              <button class="btn btn-success" id="toggleAutoBtn">
+                ▶ Start Autonomous Agent
+              </button>
+              <button class="btn btn-secondary" id="triggerScanBtn">
+                🔍 Scan Now
+              </button>
+            </div>
+
+            <div class="control-group">
+              <span class="control-label">Candle Timeframe:</span>
+              <select id="timeframeSelect">
+                <option value="15">15 Seconds</option>
+                <option value="30">30 Seconds</option>
+                <option value="60" selected>60s (1 Minute)</option>
+                <option value="120">2 Minutes</option>
+                <option value="300">5 Minutes</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: AI Vision Inspector & Rationale -->
+      <section class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🧠</span>
+            <span>Vision AI Strategy Diagnostics</span>
+          </div>
+          <span class="font-mono" style="font-size: 0.75rem; color: var(--text-muted);" id="aiModelBadge">
+            gpt-4o / Heuristic CV
+          </span>
+        </div>
+
+        <div class="card-body ai-decision-card">
+          <!-- Decision Banner -->
+          <div class="decision-banner">
+            <div class="decision-main">
+              <span style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted);">SIGNAL</span>
+              <span class="decision-badge badge-skip font-brand" id="aiDecisionBadge">STANDBY</span>
+              <span class="font-mono" style="font-size: 0.8rem; color: var(--text-muted);" id="aiPriceEstimate">Est. Price: --</span>
+            </div>
+            <div class="confidence-meter">
+              <span style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted);">CONFIDENCE</span>
+              <span class="confidence-val font-mono" id="aiConfidenceVal">0.0%</span>
+              <span class="font-mono" style="font-size: 0.75rem; color: var(--text-muted);" id="aiGradeVal">GRADE: --</span>
+            </div>
+          </div>
+
+          <!-- Cropped Frame Ingestion Snapshot -->
+          <div class="cropped-preview-box">
+            <img id="croppedPreviewImg" src="" alt="Cropped Chart Canvas" style="display: none;">
+            <div id="croppedPlaceholder" style="color: var(--text-dim); font-size: 0.85rem;">
+              Auto-Cropped Candlestick Canvas Preview
+            </div>
+            <span class="preview-overlay-tag font-mono">CROPPED FEED</span>
+          </div>
+
+          <!-- AI Price Action Traits Grid -->
+          <div class="ai-traits">
+            <div class="trait-item">
+              <span class="trait-label">Trend Bias:</span>
+              <span class="trait-val" id="traitTrend">--</span>
+            </div>
+            <div class="trait-item">
+              <span class="trait-label">Rejection Wick:</span>
+              <span class="trait-val" id="traitWick">--</span>
+            </div>
+            <div class="trait-item">
+              <span class="trait-label">Key Level:</span>
+              <span class="trait-val" id="traitLevel">--</span>
+            </div>
+            <div class="trait-item">
+              <span class="trait-label">Strictness Filter:</span>
+              <span class="trait-val" id="traitFilter">PASSED</span>
+            </div>
+          </div>
+
+          <!-- AI Reasoning Text -->
+          <div class="ai-rationale-box" id="aiRationaleText">
+            The autonomous agent will evaluate the cropped candlestick canvas, verify wick rejection at key levels, and apply dynamic strictness filters before placing virtual paper trades.
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Trade Ledger History Section -->
+    <section class="ledger-section">
+      <div class="card-header">
+        <div class="card-title">
+          <span>📜</span>
+          <span>Paper Trading Ledger & Verification History</span>
+        </div>
+        <div class="font-mono" style="font-size: 0.8rem; color: var(--text-muted);" id="ledgerCount">
+          0 Executed Trades
+        </div>
+      </div>
+
+      <div class="ledger-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Direction</th>
+              <th>Entry Price</th>
+              <th>Close Price</th>
+              <th>Outcome</th>
+              <th>PnL</th>
+              <th>Confidence</th>
+              <th>Strictness</th>
+              <th>Reasoning</th>
+            </tr>
+          </thead>
+          <tbody id="tradeHistoryBody">
+            <tr>
+              <td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">
+                No paper trades executed yet. Share Quotex chart and start the autonomous agent.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Settings & Config Modal -->
+  <div class="modal-overlay" id="configModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="font-brand" style="font-size: 1rem;">AGENT SETTINGS & API</h3>
+        <button class="btn btn-icon" id="closeModalBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="cfgApiKey">Vision AI API Key (OpenAI / xAI / OpenRouter):</label>
+          <input type="text" id="cfgApiKey" placeholder="sk-proj-... (Leave empty for built-in Heuristic CV)">
+        </div>
+        <div class="form-group">
+          <label for="cfgBaseUrl">API Base URL:</label>
+          <input type="text" id="cfgBaseUrl" value="https://api.openai.com/v1">
+        </div>
+        <div class="form-group">
+          <label for="cfgModel">Vision Model Name:</label>
+          <input type="text" id="cfgModel" value="gpt-4o">
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="form-group">
+            <label for="cfgAmount">Virtual Trade Amount ($):</label>
+            <input type="number" id="cfgAmount" value="100.0" step="10">
+          </div>
+          <div class="form-group">
+            <label for="cfgPayout">Quotex Payout Rate (e.g. 0.85 = 85%):</label>
+            <input type="number" id="cfgPayout" value="0.85" step="0.01" min="0.1" max="1.0">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="cfgStrictness">Manual Strictness Override (1-5):</label>
+          <select id="cfgStrictness">
+            <option value="1">Level 1 - Lenient (62% min conf)</option>
+            <option value="2" selected>Level 2 - Balanced (70% min conf)</option>
+            <option value="3">Level 3 - Selective (78% min conf)</option>
+            <option value="4">Level 4 - High Strictness (84% min conf)</option>
+            <option value="5">Level 5 - Sniper Mode (90% min conf)</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelConfigBtn">Cancel</button>
+        <button class="btn btn-primary" id="saveConfigBtn">Save Configuration</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audio Synthesizer (Web Audio API) & Frontend Logic -->
+  <script>
+    // =========================================================================
+    // AUDIO SYNTHESIZER (ZERO-DEPENDENCY CHIMES)
+    // =========================================================================
+    class SoundEngine {
+      constructor() {
+        this.ctx = null;
+        this.enabled = true;
+      }
+
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      playTone(freq, duration, type = 'sine', gainVal = 0.15) {
+        if (!this.enabled) return;
+        this.init();
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+
+        gain.gain.setValueAtTime(gainVal, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + duration);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        osc.start();
+        osc.stop(this.ctx.currentTime + duration);
+      }
+
+      playWin() {
+        if (!this.enabled) return;
+        this.init();
+        const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+        notes.forEach((freq, idx) => {
+          setTimeout(() => this.playTone(freq, 0.28, 'triangle', 0.2), idx * 110);
+        });
+      }
+
+      playLoss() {
+        if (!this.enabled) return;
+        this.init();
+        const notes = [349.23, 261.63, 174.61]; // F4, C4, F3
+        notes.forEach((freq, idx) => {
+          setTimeout(() => this.playTone(freq, 0.35, 'sawtooth', 0.15), idx * 140);
+        });
+      }
+
+      playTradePlaced() {
+        if (!this.enabled) return;
+        this.init();
+        this.playTone(880, 0.1, 'sine', 0.2);
+        setTimeout(() => this.playTone(1320, 0.18, 'sine', 0.25), 110);
+      }
+
+      playTargetAchieved() {
+        if (!this.enabled) return;
+        this.init();
+        const fanfare = [523.25, 659.25, 783.99, 1046.50, 1318.51, 1567.98];
+        fanfare.forEach((freq, idx) => {
+          setTimeout(() => this.playTone(freq, 0.35, 'triangle', 0.25), idx * 120);
+        });
+      }
+    }
+
+    const sound = new SoundEngine();
+
+    // =========================================================================
+    // STATE & DOM ELEMENTS
+    // =========================================================================
+    let screenStream = null;
+    let autoTradingActive = false;
+    let cycleIntervalTimer = null;
+    let candleTimeframe = 60; // seconds
+    let candleSecondsLeft = 60;
+    let activePendingTrade = null;
+
+    // DOM Elements
+    const shareScreenBtn = document.getElementById('shareScreenBtn');
+    const streamVideo = document.getElementById('streamVideo');
+    const streamCanvas = document.getElementById('streamCanvas');
+    const streamPlaceholder = document.getElementById('streamPlaceholder');
+    const toggleAutoBtn = document.getElementById('toggleAutoBtn');
+    const triggerScanBtn = document.getElementById('triggerScanBtn');
+    const timeframeSelect = document.getElementById('timeframeSelect');
+    const soundToggleBtn = document.getElementById('soundToggleBtn');
+    const soundIcon = document.getElementById('soundIcon');
+    const cycleProgressBar = document.getElementById('cycleProgressBar');
+    const cycleSecondsRemaining = document.getElementById('cycleSecondsRemaining');
+
+    // Status Banner Elements
+    const statusBanner = document.getElementById('statusBanner');
+    const statusPill = document.getElementById('statusPill');
+    const statusIcon = document.getElementById('statusIcon');
+    const statusBadgeText = document.getElementById('statusBadgeText');
+    const statusDescription = document.getElementById('statusDescription');
+    const rollingBadges = document.getElementById('rollingBadges');
+    const rollingRateBadge = document.getElementById('rollingRateBadge');
+
+    // Stats
+    const statBalance = document.getElementById('statBalance');
+    const statPnl = document.getElementById('statPnl');
+    const statTotalTrades = document.getElementById('statTotalTrades');
+    const statRecord = document.getElementById('statRecord');
+    const statWinRate = document.getElementById('statWinRate');
+    const statStrictness = document.getElementById('statStrictness');
+    const statStrictnessDesc = document.getElementById('statStrictnessDesc');
+
+    // Active Trade Box
+    const activeTradeBox = document.getElementById('activeTradeBox');
+    const atDirection = document.getElementById('atDirection');
+    const atEntryPrice = document.getElementById('atEntryPrice');
+    const atCountdown = document.getElementById('atCountdown');
+    const forceVerifyBtn = document.getElementById('forceVerifyBtn');
+
+    // AI Diagnostics
+    const aiDecisionBadge = document.getElementById('aiDecisionBadge');
+    const aiPriceEstimate = document.getElementById('aiPriceEstimate');
+    const aiConfidenceVal = document.getElementById('aiConfidenceVal');
+    const aiGradeVal = document.getElementById('aiGradeVal');
+    const croppedPreviewImg = document.getElementById('croppedPreviewImg');
+    const croppedPlaceholder = document.getElementById('croppedPlaceholder');
+    const traitTrend = document.getElementById('traitTrend');
+    const traitWick = document.getElementById('traitWick');
+    const traitLevel = document.getElementById('traitLevel');
+    const traitFilter = document.getElementById('traitFilter');
+    const aiRationaleText = document.getElementById('aiRationaleText');
+    const aiModelBadge = document.getElementById('aiModelBadge');
+
+    // Table
+    const tradeHistoryBody = document.getElementById('tradeHistoryBody');
+    const ledgerCount = document.getElementById('ledgerCount');
+
+    // Config Modal
+    const configBtn = document.getElementById('configBtn');
+    const configModal = document.getElementById('configModal');
+    const closeModalBtn = document.getElementById('closeModalBtn');
+    const cancelConfigBtn = document.getElementById('cancelConfigBtn');
+    const saveConfigBtn = document.getElementById('saveConfigBtn');
+    const resetSessionBtn = document.getElementById('resetSessionBtn');
+
+    // =========================================================================
+    // SCREEN CAPTURE API
+    // =========================================================================
+    shareScreenBtn.addEventListener('click', async () => {
+      try {
+        screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            cursor: "never",
+            displaySurface: "browser"
+          },
+          audio: false
+        });
+
+        streamVideo.srcObject = screenStream;
+        streamVideo.style.display = 'block';
+        streamPlaceholder.style.display = 'none';
+
+        shareScreenBtn.innerHTML = '🟢 Quotex Tab Connected';
+        shareScreenBtn.classList.remove('btn-primary');
+        shareScreenBtn.classList.add('btn-secondary');
+
+        screenStream.getVideoTracks()[0].onended = () => {
+          streamVideo.style.display = 'none';
+          streamPlaceholder.style.display = 'flex';
+          shareScreenBtn.innerHTML = '📡 Share Quotex Tab';
+          shareScreenBtn.classList.remove('btn-secondary');
+          shareScreenBtn.classList.add('btn-primary');
+          screenStream = null;
+        };
+
+        // Resume AudioContext on user interaction
+        sound.init();
+
+      } catch (err) {
+        console.error("Screen capture cancelled or failed:", err);
+        alert("Screen capture was cancelled or failed. Please select your Quotex window/tab.");
+      }
+    });
+
+    function captureCurrentFrameBase64() {
+      if (!screenStream || !streamVideo.videoWidth) {
+        return null;
+      }
+      streamCanvas.width = streamVideo.videoWidth;
+      streamCanvas.height = streamVideo.videoHeight;
+      const ctx = streamCanvas.getContext('2d');
+      ctx.drawImage(streamVideo, 0, 0, streamCanvas.width, streamCanvas.height);
+      return streamCanvas.toDataURL('image/jpeg', 0.88);
+    }
+
+    // =========================================================================
+    // SERVER API CLIENT & REFRESH LOGIC
+    // =========================================================================
+    async function fetchSessionStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        updateUIWithSessionStats(data);
+      } catch (e) {
+        console.warn("Failed to fetch session status:", e);
+      }
+    }
+
+    async function fetchTradeHistory() {
+      try {
+        const res = await fetch('/api/trades');
+        const trades = await res.json();
+        renderTradeHistory(trades);
+      } catch (e) {
+        console.warn("Failed to fetch trades:", e);
+      }
+    }
+
+    function updateUIWithSessionStats(stats) {
+      // Balance & PnL
+      statBalance.textContent = `$${stats.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const pnl = stats.balance - stats.initial_balance;
+      statPnl.textContent = `PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+      statPnl.className = `stat-sub font-mono ${pnl >= 0 ? 'badge-win' : 'badge-loss'}`;
+
+      // Total Trades & Record
+      statTotalTrades.textContent = stats.total_trades;
+      statRecord.textContent = `Wins: ${stats.wins} | Losses: ${stats.losses} | Draws: ${stats.draws}`;
+      statWinRate.textContent = `${stats.overall_win_rate.toFixed(1)}%`;
+
+      // Strictness
+      statStrictness.textContent = `Level ${stats.current_strictness}`;
+      statStrictnessDesc.textContent = stats.strictness_name.split(' - ')[1] || 'Standard';
+
+      // Rolling 5 Badges
+      const rolls = stats.rolling_window || [];
+      rollingBadges.innerHTML = '';
+      for (let i = 0; i < 5; i++) {
+        const pill = document.createElement('div');
+        pill.className = 'roll-pill font-mono';
+        if (i < rolls.length) {
+          const outcome = rolls[i];
+          if (outcome === 'WIN') {
+            pill.textContent = 'W';
+            pill.classList.add('win');
+          } else if (outcome === 'LOSS') {
+            pill.textContent = 'L';
+            pill.classList.add('loss');
+          } else {
+            pill.textContent = 'D';
+            pill.classList.add('draw');
+          }
+        } else {
+          pill.textContent = '-';
+        }
+        rollingBadges.appendChild(pill);
+      }
+      rollingRateBadge.textContent = `${stats.rolling_win_rate.toFixed(1)}%`;
+
+      // Target Achieved Status Banner
+      if (stats.target_achieved) {
+        statusBanner.classList.add('achieved');
+        statusPill.classList.add('achieved');
+        statusIcon.textContent = '🏆';
+        statusBadgeText.textContent = 'TARGET ACHIEVED: 80% WIN RATE';
+        statusDescription.innerHTML = `<strong>CONVERGENCE REACHED!</strong> Agent completed ${rolls.filter(x => x === 'WIN').length}/${rolls.length} wins in rolling window. Strategy locked.`;
+      } else {
+        statusBanner.classList.remove('achieved');
+        statusPill.classList.remove('achieved');
+        statusIcon.textContent = '⚡';
+        statusBadgeText.textContent = stats.status_badge;
+        statusDescription.innerHTML = stats.status_message;
+      }
+
+      // Active Pending Trade Widget
+      if (stats.active_trade) {
+        activePendingTrade = stats.active_trade;
+        activeTradeBox.classList.add('active');
+        atDirection.textContent = activePendingTrade.direction;
+        atDirection.className = `dir-tag font-mono ${activePendingTrade.direction}`;
+        atEntryPrice.textContent = activePendingTrade.entry_price.toFixed(5);
+      } else {
+        activePendingTrade = null;
+        activeTradeBox.classList.remove('active');
+      }
+    }
+
+    function renderTradeHistory(trades) {
+      ledgerCount.textContent = `${trades.length} Executed Trades`;
+      if (!trades.length) {
+        tradeHistoryBody.innerHTML = `
+          <tr>
+            <td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">
+              No paper trades executed yet. Share Quotex chart and start the autonomous agent.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tradeHistoryBody.innerHTML = trades.map(t => {
+        const outcomePill = t.outcome === 'WIN' 
+          ? `<span class="pill-win">WIN</span>`
+          : (t.outcome === 'LOSS' ? `<span class="pill-loss">LOSS</span>` : `<span class="pill-draw">${t.outcome}</span>`);
+
+        const pnlFormatted = t.pnl >= 0 ? `+$${t.pnl.toFixed(2)}` : `-$${Math.abs(t.pnl).toFixed(2)}`;
+        const pnlColor = t.pnl > 0 ? 'var(--neon-green)' : (t.pnl < 0 ? 'var(--neon-red)' : 'var(--text-muted)');
+
+        return `
+          <tr>
+            <td class="font-mono">${t.timestamp}</td>
+            <td><strong class="${t.direction === 'CALL' ? 'badge-win' : 'badge-loss'}">${t.direction}</strong></td>
+            <td class="font-mono">${t.entry_price ? t.entry_price.toFixed(5) : '--'}</td>
+            <td class="font-mono">${t.close_price ? t.close_price.toFixed(5) : '--'}</td>
+            <td>${outcomePill}</td>
+            <td class="font-mono" style="color: ${pnlColor}; font-weight: 700;">${pnlFormatted}</td>
+            <td class="font-mono">${t.confidence.toFixed(1)}%</td>
+            <td class="font-mono">L${t.strictness_level}</td>
+            <td style="max-width: 320px; font-size: 0.78rem; color: var(--text-muted);">${escapeHtml(t.rationale)}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+    }
+
+    // =========================================================================
+    // EXECUTION CYCLE & VERIFICATION
+    // =========================================================================
+    async function executeCycle(forceVerification = false) {
+      let b64 = captureCurrentFrameBase64();
+
+      if (!b64) {
+        // If screen not shared yet, provide simulated mock frame for demonstration
+        b64 = generateMockChartCanvasBase64();
+      }
+
+      try {
+        const payload = {
+          image_base64: b64,
+          timeframe_seconds: candleTimeframe,
+          force_verify: forceVerification
+        };
+
+        const response = await fetch('/api/auto-cycle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+        handleCycleResult(data);
+
+      } catch (err) {
+        console.error("Cycle execution error:", err);
+      }
+    }
+
+    function handleCycleResult(data) {
+      if (data.session) {
+        updateUIWithSessionStats(data.session);
+      }
+
+      // Check if cropped frame preview returned
+      if (data.cropped_preview_b64) {
+        croppedPreviewImg.src = data.cropped_preview_b64;
+        croppedPreviewImg.style.display = 'block';
+        croppedPlaceholder.style.display = 'none';
+      }
+
+      // Decision details
+      if (data.decision) {
+        const dec = data.decision;
+        aiDecisionBadge.textContent = dec.direction;
+        aiDecisionBadge.className = `decision-badge font-brand ${dec.direction === 'CALL' ? 'badge-call' : (dec.direction === 'PUT' ? 'badge-put' : 'badge-skip')}`;
+        aiPriceEstimate.textContent = `Est. Price: ${dec.current_price.toFixed(5)}`;
+        aiConfidenceVal.textContent = `${dec.confidence.toFixed(1)}%`;
+        aiGradeVal.textContent = `GRADE: ${dec.setup_grade || 'B'}`;
+
+        traitTrend.textContent = dec.trend;
+        traitWick.textContent = dec.rejection_wick_found ? 'YES (Confirmed)' : 'NO (Weak)';
+        traitLevel.textContent = dec.support_resistance_level || 'Dynamic Zone';
+        traitFilter.textContent = dec.direction === 'SKIP' ? 'FILTERED' : 'PASSED';
+        traitFilter.style.color = dec.direction === 'SKIP' ? 'var(--neon-gold)' : 'var(--neon-green)';
+
+        aiRationaleText.textContent = dec.reasoning;
+      }
+
+      // Audio alerts
+      if (data.cycle_action && data.cycle_action.startsWith('TRADE_OPENED')) {
+        sound.playTradePlaced();
+      } else if (data.cycle_action === 'TRADE_VERIFIED') {
+        fetchTradeHistory();
+        const outcome = data.trade.outcome;
+        if (outcome === 'WIN') {
+          sound.playWin();
+          if (data.session && data.session.target_achieved) {
+            setTimeout(() => sound.playTargetAchieved(), 700);
+          }
+        } else if (outcome === 'LOSS') {
+          sound.playLoss();
+        }
+      }
+    }
+
+    // Heuristic synthetic frame generator (for offline / testing without screen share)
+    function generateMockChartCanvasBase64() {
+      const off = document.createElement('canvas');
+      off.width = 640;
+      off.height = 360;
+      const ctx = off.getContext('2d');
+      // Dark background
+      ctx.fillStyle = '#0a0d14';
+      ctx.fillRect(0, 0, off.width, off.height);
+      // Grid lines
+      ctx.strokeStyle = '#1b2333';
+      ctx.lineWidth = 1;
+      for (let y = 30; y < off.height; y += 40) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(off.width, y); ctx.stroke();
+      }
+      // Candlesticks
+      let price = 180;
+      for (let i = 20; i < off.width - 60; i += 18) {
+        const isGreen = Math.random() > 0.45;
+        const bodyHeight = 8 + Math.random() * 26;
+        const wickHeight = bodyHeight + 6 + Math.random() * 16;
+        price += (isGreen ? -1 : 1) * (Math.random() * 8);
+
+        ctx.strokeStyle = isGreen ? '#00e793' : '#ff3b56';
+        ctx.fillStyle = isGreen ? '#00e793' : '#ff3b56';
+
+        // Wick
+        ctx.beginPath();
+        ctx.moveTo(i + 4, price - wickHeight / 2);
+        ctx.lineTo(i + 4, price + wickHeight / 2);
+        ctx.stroke();
+
+        // Body
+        ctx.fillRect(i, price - bodyHeight / 2, 8, bodyHeight);
+      }
+      return off.toDataURL('image/jpeg', 0.85);
+    }
+
+    // =========================================================================
+    // CANDLE COUNTDOWN & AUTOMATION TIMER LOOP
+    // =========================================================================
+    function startAutonomousLoop() {
+      autoTradingActive = true;
+      toggleAutoBtn.innerHTML = '⏹ Stop Autonomous Agent';
+      toggleAutoBtn.classList.remove('btn-success');
+      toggleAutoBtn.classList.add('btn-danger');
+
+      candleTimeframe = parseInt(timeframeSelect.value, 10);
+      candleSecondsLeft = candleTimeframe;
+
+      clearInterval(cycleIntervalTimer);
+      cycleIntervalTimer = setInterval(() => {
+        candleSecondsLeft--;
+
+        if (candleSecondsLeft < 0) {
+          candleSecondsLeft = candleTimeframe;
+        }
+
+        // Update progress bar
+        const pct = (candleSecondsLeft / candleTimeframe) * 100;
+        cycleProgressBar.style.width = `${pct}%`;
+        cycleSecondsRemaining.textContent = `${candleSecondsLeft}s`;
+
+        // Update active trade countdown
+        if (activePendingTrade) {
+          atCountdown.textContent = `${Math.max(0, candleSecondsLeft)}s`;
+        }
+
+        // Trigger scan 3 seconds before candle close or on close
+        if (candleSecondsLeft === 3 || candleSecondsLeft === 0) {
+          executeCycle();
+        }
+      }, 1000);
+    }
+
+    function stopAutonomousLoop() {
+      autoTradingActive = false;
+      toggleAutoBtn.innerHTML = '▶ Start Autonomous Agent';
+      toggleAutoBtn.classList.remove('btn-danger');
+      toggleAutoBtn.classList.add('btn-success');
+      clearInterval(cycleIntervalTimer);
+    }
+
+    toggleAutoBtn.addEventListener('click', () => {
+      sound.init();
+      if (!autoTradingActive) {
+        startAutonomousLoop();
+      } else {
+        stopAutonomousLoop();
+      }
+    });
+
+    triggerScanBtn.addEventListener('click', () => {
+      sound.init();
+      executeCycle();
+    });
+
+    forceVerifyBtn.addEventListener('click', () => {
+      sound.init();
+      executeCycle(true);
+    });
+
+    timeframeSelect.addEventListener('change', () => {
+      candleTimeframe = parseInt(timeframeSelect.value, 10);
+      candleSecondsLeft = candleTimeframe;
+      cycleSecondsRemaining.textContent = `${candleSecondsLeft}s`;
+      cycleProgressBar.style.width = '100%';
+    });
+
+    soundToggleBtn.addEventListener('click', () => {
+      sound.enabled = !sound.enabled;
+      soundIcon.textContent = sound.enabled ? '🔊' : '🔇';
+    });
+
+    // =========================================================================
+    // MODAL & CONFIGURATION HANDLERS
+    // =========================================================================
+    configBtn.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/config');
+        const cfg = await res.json();
+        document.getElementById('cfgBaseUrl').value = cfg.base_url;
+        document.getElementById('cfgModel').value = cfg.model_name;
+        document.getElementById('cfgAmount').value = cfg.trade_amount;
+        document.getElementById('cfgPayout').value = cfg.payout_rate;
+        document.getElementById('cfgStrictness').value = cfg.current_strictness;
+        configModal.classList.add('open');
+      } catch (e) {
+        console.error("Error loading config:", e);
+      }
+    });
+
+    function closeConfig() {
+      configModal.classList.remove('open');
+    }
+
+    closeModalBtn.addEventListener('click', closeConfig);
+    cancelConfigBtn.addEventListener('click', closeConfig);
+
+    saveConfigBtn.addEventListener('click', async () => {
+      const keyVal = document.getElementById('cfgApiKey').value.trim();
+      const payload = {
+        base_url: document.getElementById('cfgBaseUrl').value.trim(),
+        model_name: document.getElementById('cfgModel').value.trim(),
+        trade_amount: parseFloat(document.getElementById('cfgAmount').value),
+        payout_rate: parseFloat(document.getElementById('cfgPayout').value),
+        strictness_level: parseInt(document.getElementById('cfgStrictness').value, 10)
+      };
+
+      if (keyVal) {
+        payload.api_key = keyVal;
+      }
+
+      try {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        closeConfig();
+        fetchSessionStatus();
+        alert("Configuration updated successfully!");
+      } catch (err) {
+        alert("Failed to save configuration.");
+      }
+    });
+
+    resetSessionBtn.addEventListener('click', async () => {
+      if (confirm("Reset current paper trading session and clear trade history?")) {
+        try {
+          await fetch('/api/reset', { method: 'POST' });
+          fetchSessionStatus();
+          fetchTradeHistory();
+        } catch (e) {
+          alert("Failed to reset session.");
+        }
+      }
+    });
+
+    // Initial load
+    fetchSessionStatus();
+    fetchTradeHistory();
+  </script>
+</body>
+</html>
