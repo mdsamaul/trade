@@ -936,12 +936,42 @@ def attach_to_input_desktop() -> bool:
     return False
 
 
+def ensure_quotex_focused() -> bool:
+    """Brings the Quotex browser window to the foreground if minimized or behind."""
+    try:
+        import ctypes
+        attach_to_input_desktop()
+        user32 = ctypes.windll.user32
+        found_hwnd = None
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+
+        def enum_cb(hwnd, lp):
+            nonlocal found_hwnd
+            buf = ctypes.create_unicode_buffer(256)
+            if user32.IsWindowVisible(hwnd) and user32.GetWindowTextW(hwnd, buf, 256) > 0:
+                title_lower = buf.value.lower()
+                if "quotex" in title_lower:
+                    found_hwnd = hwnd
+                    return False
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+        if found_hwnd:
+            user32.ShowWindow(found_hwnd, 9)  # SW_RESTORE
+            user32.ShowWindow(found_hwnd, 3)  # SW_SHOWMAXIMIZED
+            user32.SetForegroundWindow(found_hwnd)
+            return True
+    except Exception as e:
+        logger.warning(f"Could not focus Quotex window: {e}")
+    return False
+
+
 class AutoClickerConfig(BaseModel):
     enabled: bool = True
     call_x: int = 1805
     call_y: int = 485
     put_x: int = 1805
-    put_y: int = 535
+    put_y: int = 538
     restore_cursor: bool = False
 
 
@@ -960,6 +990,57 @@ class QuotexAutoClicker:
             if put_y is not None: self.config.put_y = int(put_y)
             if restore_cursor is not None: self.config.restore_cursor = bool(restore_cursor)
 
+    def auto_detect_quotex_buttons(self) -> Dict[str, Any]:
+        """
+        Scans screen with Computer Vision to find exact centers of Green Buy and Red Sell buttons.
+        Automatically brings Quotex to the front if minimized.
+        """
+        try:
+            import ctypes, cv2, numpy as np, time
+            from PIL import ImageGrab
+
+            attach_to_input_desktop()
+            ensure_quotex_focused()
+            time.sleep(0.40)
+
+            img = ImageGrab.grab()
+            arr = np.array(img)
+            h, w, _ = arr.shape
+            right_panel = arr[:, int(w * 0.70):, :]
+            hsv = cv2.cvtColor(right_panel, cv2.COLOR_RGB2HSV)
+
+            g_mask = cv2.inRange(hsv, np.array([35, 100, 100]), np.array([85, 255, 255]))
+            r_mask1 = cv2.inRange(hsv, np.array([0, 100, 100]), np.array([12, 255, 255]))
+            r_mask2 = cv2.inRange(hsv, np.array([165, 100, 100]), np.array([180, 255, 255]))
+            r_mask = cv2.bitwise_or(r_mask1, r_mask2)
+
+            def detect(mask):
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cands = [cv2.boundingRect(c) for c in contours if cv2.boundingRect(c)[2] >= 50 and cv2.boundingRect(c)[3] >= 20]
+                if cands:
+                    bx, by, bw, bh = sorted(cands, key=lambda b: b[2] * b[3], reverse=True)[0]
+                    return int(w * 0.70) + bx + (bw // 2), by + (bh // 2)
+                return None
+
+            call_pos = detect(g_mask)
+            put_pos = detect(r_mask)
+
+            if call_pos and put_pos:
+                with self.lock:
+                    self.config.call_x, self.config.call_y = call_pos
+                    self.config.put_x, self.config.put_y = put_pos
+                logger.info(f"🎯 [AUTO-DETECT SUCCESS] Green Buy: {call_pos}, Red Sell: {put_pos}")
+                return {
+                    "success": True,
+                    "call_x": call_pos[0],
+                    "call_y": call_pos[1],
+                    "put_x": put_pos[0],
+                    "put_y": put_pos[1]
+                }
+        except Exception as e:
+            logger.error(f"Auto-detection error: {e}")
+        return {"success": False, "error": "Quotex buttons not found on screen"}
+
     def execute_click(self, direction: str) -> bool:
         with self.lock:
             if not self.config.enabled:
@@ -974,8 +1055,10 @@ class QuotexAutoClicker:
                 from ctypes import wintypes
                 import time
 
-                # Attach this worker thread directly to the interactive desktop
+                # Attach this worker thread directly to the interactive desktop and focus Quotex
                 attach_to_input_desktop()
+                ensure_quotex_focused()
+                time.sleep(0.06)
 
                 orig_pt = wintypes.POINT()
                 has_orig = bool(ctypes.windll.user32.GetCursorPos(ctypes.byref(orig_pt)))
@@ -1017,7 +1100,8 @@ class QuotexAutoClicker:
             import time
 
             attach_to_input_desktop()
-
+            ensure_quotex_focused()
+            time.sleep(0.08)
             ctypes.windll.user32.SetCursorPos(int(target_x), int(target_y))
             time.sleep(0.05)
             ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)

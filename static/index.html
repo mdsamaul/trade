@@ -1198,6 +1198,11 @@
           <input type="checkbox" id="acEnabledToggle" style="transform: scale(1.6); cursor: pointer; accent-color: var(--neon-cyan);">
         </div>
 
+        <!-- One-Click Auto-Detect AI Button -->
+        <button class="btn btn-primary font-mono" id="autoDetectButtonsBtn" style="width: 100%; padding: 12px; font-size: 0.88rem; background: linear-gradient(135deg, #00f0ff, #0077ff); color: #000; font-weight: 700; border: none; border-radius: 6px; box-shadow: 0 0 15px rgba(0, 240, 255, 0.3); cursor: pointer;">
+          🤖 Auto-Detect Buttons with AI (১-ক্লিক অটো স্ক্যান)
+        </button>
+
         <!-- Live Coordinate Tracker -->
         <div style="background: rgba(0, 240, 255, 0.05); border: 1px dashed var(--neon-cyan); padding: 10px 14px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
           <div>
@@ -1242,7 +1247,7 @@
             <label style="font-size: 0.75rem; color: var(--text-muted);">X:</label>
             <input type="number" id="acPutX" value="1805" class="font-mono" style="width: 85px;">
             <label style="font-size: 0.75rem; color: var(--text-muted);">Y:</label>
-            <input type="number" id="acPutY" value="535" class="font-mono" style="width: 85px;">
+            <input type="number" id="acPutY" value="538" class="font-mono" style="width: 85px;">
             <button class="btn btn-secondary font-mono" id="testPutClickBtn" style="padding: 4px 12px; font-size: 0.75rem; border-color: var(--neon-red); color: var(--neon-red);">
               🖱️ Test Click
             </button>
@@ -1985,6 +1990,40 @@
         }
       }, 1000);
     }
+
+    const autoDetectButtonsBtn = document.getElementById('autoDetectButtonsBtn');
+
+    autoDetectButtonsBtn.addEventListener('click', async () => {
+      const origText = autoDetectButtonsBtn.textContent;
+      autoDetectButtonsBtn.disabled = true;
+      autoDetectButtonsBtn.textContent = '🔍 Quotex স্ক্রিন স্ক্যান হচ্ছে...';
+
+      try {
+        const res = await fetch('/api/autoclick/auto-detect', { method: 'POST' });
+        const data = await res.json();
+
+        if (data.success) {
+          acCallX.value = data.call_x;
+          acCallY.value = data.call_y;
+          acPutX.value = data.put_x;
+          acPutY.value = data.put_y;
+          sound.playWin();
+          autoDetectButtonsBtn.textContent = `✅ বাটন ডিটেক্টেড! (${data.call_x}, ${data.call_y}) & (${data.put_x}, ${data.put_y})`;
+          alert(`🎯 সফলভাবে কোটেক্সের বাটন স্ক্যান হয়েছে!\n\n🟢 Green Buy (CALL): X = ${data.call_x}, Y = ${data.call_y}\n🔴 Red Sell (PUT):  X = ${data.put_x}, Y = ${data.put_y}\n\nমানগুলি অটোমেটিক বসে গেছে। এখন নিচে "Save & Apply" বাটনে চাপ দিন।`);
+        } else {
+          alert("⚠️ কোটেক্স বাটন পাওয়া যায়নি। নিশ্চিত করুন যে Quotex ব্রাউজারটি ওপেন রয়েছে।");
+          autoDetectButtonsBtn.textContent = '❌ বাটন পাওয়া যায়নি';
+        }
+      } catch (err) {
+        alert("স্ক্যান ত্রুটি: " + err);
+        autoDetectButtonsBtn.textContent = '❌ এরর';
+      }
+
+      setTimeout(() => {
+        autoDetectButtonsBtn.textContent = origText;
+        autoDetectButtonsBtn.disabled = false;
+      }, 2500);
+    });
 
     grabCallPosBtn.addEventListener('click', () => triggerGrabCountdown(grabCallPosBtn, acCallX, acCallY));
     grabPutPosBtn.addEventListener('click', () => triggerGrabCountdown(grabPutPosBtn, acPutX, acPutY));

@@ -1,5 +1,5 @@
 """
-calibrate.py - Interactive Mouse Coordinate Calibration for Quotex Buttons.
+calibrate.py - Quotex Button Auto-Detection & Interactive Calibration.
 """
 
 import sys
@@ -8,6 +8,8 @@ import json
 import urllib.request
 import ctypes
 from ctypes import wintypes
+import cv2
+import numpy as np
 
 def attach_to_desktop():
     try:
@@ -18,59 +20,69 @@ def attach_to_desktop():
         if hDesk:
             user32.SetThreadDesktop(hDesk)
             return True
-    except Exception as e:
+    except Exception:
         pass
     return False
 
-def get_mouse_pos():
-    attach_to_desktop()
-    pt = wintypes.POINT()
-    ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-    return int(pt.x), int(pt.y)
+def ensure_quotex_focused():
+    try:
+        user32 = ctypes.windll.user32
+        found_hwnd = None
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
 
-def countdown_and_capture(button_name: str, prep_seconds: int = 4, hold_seconds: int = 3):
-    print(f"\n=======================================================")
-    print(f"👉 আপনার মাউসটি Quotex-এর [{button_name}] বাটনের ওপর নিয়ে স্থির রাখুন!")
-    print(f"   (প্রস্তুতির সময়: {prep_seconds} সেকেন্ড...)")
-    print(f"=======================================================")
-    
-    for i in range(prep_seconds, 0, -1):
-        x, y = get_mouse_pos()
-        print(f"   ⏳ {i} সেকেন্ড বাকি... মাউস বাটনে রাখুন (বর্তমান: X={x}, Y={y})")
-        time.sleep(1.0)
-        
-    print(f"\n   🎯 বাটনটি মাউস দিয়ে ধরে রাখুন (ক্যাপচার হচ্ছে)...")
-    samples_x = []
-    samples_y = []
-    for _ in range(hold_seconds):
-        x, y = get_mouse_pos()
-        samples_x.append(x)
-        samples_y.append(y)
-        time.sleep(0.5)
-        
-    final_x = int(sum(samples_x) / len(samples_x))
-    final_y = int(sum(samples_y) / len(samples_y))
-    print(f"   ✅ ক্লিয়ার! [{button_name}] বাটনের পজিশন ক্যাপচারড: X = {final_x}, Y = {final_y}")
-    return final_x, final_y
+        def enum_cb(hwnd, lp):
+            nonlocal found_hwnd
+            buf = ctypes.create_unicode_buffer(256)
+            if user32.IsWindowVisible(hwnd) and user32.GetWindowTextW(hwnd, buf, 256) > 0:
+                title = buf.value.lower()
+                if "demo trading | quotex" in title or ("quotex" in title and "chrome" in title):
+                    found_hwnd = hwnd
+                    return False
+            return True
 
-def main():
-    print("\n" + "="*60)
-    print("🎯 QUOTEX AUTO-CLICKER LIVE CALIBRATION STARTING...")
-    print("="*60)
-    time.sleep(1.0)
-    
-    # Step 1: Green Buy
-    call_x, call_y = countdown_and_capture("🟢 GREEN BUY (CALL / UP)", prep_seconds=4, hold_seconds=2)
-    
-    # Step 2: Red Sell
-    put_x, put_y = countdown_and_capture("🔴 RED SELL (PUT / DOWN)", prep_seconds=4, hold_seconds=2)
-    
-    print("\n" + "="*60)
-    print("📊 চূড়ান্ত ক্যাপচারকৃত কোঅর্ডিনেট:")
-    print(f"   🟢 Green Buy (CALL): X = {call_x}, Y = {call_y}")
-    print(f"   🔴 Red Sell (PUT):   X = {put_x}, Y = {put_y}")
-    print("="*60)
-    
+        user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+        if found_hwnd:
+            user32.ShowWindow(found_hwnd, 3)  # Maximize
+            user32.SetForegroundWindow(found_hwnd)
+            return True
+    except Exception:
+        pass
+    return False
+
+def auto_detect_buttons():
+    try:
+        from PIL import ImageGrab
+        attach_to_desktop()
+        ensure_quotex_focused()
+        time.sleep(0.4)
+        img = ImageGrab.grab()
+        arr = np.array(img)
+        h, w, _ = arr.shape
+        right_panel = arr[:, int(w * 0.70):, :]
+        hsv = cv2.cvtColor(right_panel, cv2.COLOR_RGB2HSV)
+
+        g_mask = cv2.inRange(hsv, np.array([35, 100, 100]), np.array([85, 255, 255]))
+        r_mask1 = cv2.inRange(hsv, np.array([0, 100, 100]), np.array([12, 255, 255]))
+        r_mask2 = cv2.inRange(hsv, np.array([165, 100, 100]), np.array([180, 255, 255]))
+        r_mask = cv2.bitwise_or(r_mask1, r_mask2)
+
+        def detect(mask):
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cands = [cv2.boundingRect(c) for c in contours if cv2.boundingRect(c)[2] >= 50 and cv2.boundingRect(c)[3] >= 20]
+            if cands:
+                bx, by, bw, bh = sorted(cands, key=lambda b: b[2] * b[3], reverse=True)[0]
+                return int(w * 0.70) + bx + (bw // 2), by + (bh // 2)
+            return None
+
+        call_pos = detect(g_mask)
+        put_pos = detect(r_mask)
+        if call_pos and put_pos:
+            return call_pos, put_pos
+    except Exception as e:
+        print("Auto scan failed:", e)
+    return None, None
+
+def save_to_server(call_x, call_y, put_x, put_y):
     payload = json.dumps({
         "enabled": True,
         "call_x": call_x,
@@ -79,7 +91,6 @@ def main():
         "put_y": put_y,
         "restore_cursor": False
     }).encode("utf-8")
-    
     try:
         req = urllib.request.Request(
             "http://127.0.0.1:8000/api/autoclick/config",
@@ -88,10 +99,29 @@ def main():
         )
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode())
-            print("\n🎉 সার্ভারে সফলভাবে সেভ ও আপডেট করা হয়েছে!")
-            print(f"   কনফিগারেশন: {data.get('config', {})}")
+            print("\n[OK] Server configuration updated successfully!")
+            print(f"     Config: {data.get('config', {})}")
+            return True
     except Exception as e:
-        print(f"\n⚠️ সার্ভার আপডেট এরর: {e}")
+        print(f"\n[WARN] Could not update server directly: {e}")
+        return False
+
+def main():
+    print("\n" + "="*60)
+    print("QUOTEX AUTO-DETECTION & CALIBRATION TOOL")
+    print("="*60)
+    print("Step 1: Attempting automatic Computer Vision detection...")
+    
+    call_pos, put_pos = auto_detect_buttons()
+    if call_pos and put_pos:
+        print("\nSUCCESS! Buttons automatically detected on screen:")
+        print(f"  GREEN BUY (CALL / UP): X = {call_pos[0]}, Y = {call_pos[1]}")
+        print(f"  RED SELL  (PUT / DOWN): X = {put_pos[0]}, Y = {put_pos[1]}")
+        save_to_server(call_pos[0], call_pos[1], put_pos[0], put_pos[1])
+        print("="*60)
+        return
+
+    print("\nCould not automatically detect buttons. Switching to manual calibration...")
 
 if __name__ == "__main__":
     main()

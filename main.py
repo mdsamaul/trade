@@ -364,6 +364,12 @@ async def test_autoclick(payload: TestClickRequest):
     return auto_clicker.test_click(payload.direction.upper())
 
 
+@app.post("/api/autoclick/auto-detect")
+async def auto_detect_buttons():
+    """Automatically scans visible screen to find Quotex Green Buy and Red Sell buttons."""
+    return auto_clicker.auto_detect_quotex_buttons()
+
+
 
 @app.post("/api/reset")
 async def reset_session():
