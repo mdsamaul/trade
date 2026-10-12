@@ -1198,12 +1198,25 @@
           <input type="checkbox" id="acEnabledToggle" style="transform: scale(1.6); cursor: pointer; accent-color: var(--neon-cyan);">
         </div>
 
+        <!-- Live Coordinate Tracker -->
+        <div style="background: rgba(0, 240, 255, 0.05); border: 1px dashed var(--neon-cyan); padding: 10px 14px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <span style="font-size: 0.75rem; color: var(--text-muted);">📡 লাইভ কার্সর মনিটর (Real-time):</span>
+            <div class="font-mono" id="liveMousePosText" style="font-size: 0.95rem; color: var(--neon-cyan); font-weight: 700;">
+              মাউস নড়াচড়া করুন...
+            </div>
+          </div>
+          <button class="btn btn-secondary font-mono" id="toggleLiveTrackerBtn" style="padding: 4px 10px; font-size: 0.75rem; border-color: var(--neon-cyan); color: var(--neon-cyan);">
+            🔴 Live Track OFF
+          </button>
+        </div>
+
         <!-- Calibration Green UP Button -->
         <div style="background: rgba(0, 255, 136, 0.05); border: 1px solid rgba(0, 255, 136, 0.3); padding: 14px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <strong style="color: var(--neon-green); font-size: 0.85rem;">🟢 UP / CALL Button Position (সবুজ বাটন - উপরে)</strong>
             <button class="btn btn-secondary font-mono" id="grabCallPosBtn" style="padding: 4px 10px; font-size: 0.75rem;">
-              🎯 Grab Cursor in 3s
+              🎯 Grab Cursor (5s)
             </button>
           </div>
           <div style="display: flex; gap: 10px; align-items: center;">
@@ -1222,7 +1235,7 @@
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <strong style="color: var(--neon-red); font-size: 0.85rem;">🔴 DOWN / PUT Button Position (লাল বাটন - নিচে)</strong>
             <button class="btn btn-secondary font-mono" id="grabPutPosBtn" style="padding: 4px 10px; font-size: 0.75rem;">
-              🎯 Grab Cursor in 3s
+              🎯 Grab Cursor (5s)
             </button>
           </div>
           <div style="display: flex; gap: 10px; align-items: center;">
@@ -1237,7 +1250,7 @@
         </div>
 
         <div style="font-size: 0.76rem; color: var(--text-muted); line-height: 1.4;">
-          👉 <strong>সহজ টিপস:</strong> "Grab Cursor in 3s" বাটনে চাপ দিন, তারপর ৩ সেকেন্ডের মধ্যে মাউসটি কোটেক্সের সবুজ বা লাল বাটনের ওপর নিয়ে স্থির রাখুন। কোঅর্ডিনেট অটোমেটিক কপি হয়ে যাবে!
+          👉 <strong>সহজ টিপস:</strong> "Grab Cursor (5s)" বাটনে চাপ দিয়ে ৫ সেকেন্ডের মধ্যে মাউসটি কোটেক্সের সবুজ বা লাল বাটনের ওপর স্থির রাখুন। কোঅর্ডিনেট অটোমেটিক সেভ হয়ে যাবে!
         </div>
       </div>
       <div class="modal-footer">
@@ -1892,36 +1905,79 @@
     });
 
     function closeAutoClickModal() {
+      stopLiveTracker();
       autoClickModal.classList.remove('open');
     }
 
     closeAutoClickModalBtn.addEventListener('click', closeAutoClickModal);
     cancelAutoClickBtn.addEventListener('click', closeAutoClickModal);
 
+    let liveTrackerInterval = null;
+    let liveTrackerActive = false;
+    const liveMousePosText = document.getElementById('liveMousePosText');
+    const toggleLiveTrackerBtn = document.getElementById('toggleLiveTrackerBtn');
+
+    function startLiveTracker() {
+      liveTrackerActive = true;
+      toggleLiveTrackerBtn.textContent = '🟢 Live Track ON';
+      toggleLiveTrackerBtn.style.color = 'var(--neon-green)';
+      toggleLiveTrackerBtn.style.borderColor = 'var(--neon-green)';
+
+      clearInterval(liveTrackerInterval);
+      liveTrackerInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/autoclick/mouse-pos');
+          const pos = await res.json();
+          if (pos && typeof pos.x === 'number') {
+            liveMousePosText.textContent = `X: ${pos.x}, Y: ${pos.y}`;
+          }
+        } catch (e) {}
+      }, 300);
+    }
+
+    function stopLiveTracker() {
+      liveTrackerActive = false;
+      toggleLiveTrackerBtn.textContent = '🔴 Live Track OFF';
+      toggleLiveTrackerBtn.style.color = 'var(--neon-cyan)';
+      toggleLiveTrackerBtn.style.borderColor = 'var(--neon-cyan)';
+      clearInterval(liveTrackerInterval);
+      liveMousePosText.textContent = 'মাউস নড়াচড়া করুন...';
+    }
+
+    toggleLiveTrackerBtn.addEventListener('click', () => {
+      if (!liveTrackerActive) {
+        startLiveTracker();
+      } else {
+        stopLiveTracker();
+      }
+    });
+
     function triggerGrabCountdown(buttonEl, targetXInput, targetYInput) {
-      let count = 3;
+      let count = 5;
       buttonEl.disabled = true;
       const origText = buttonEl.textContent;
-      buttonEl.textContent = `Hover over button in ${count}s...`;
-      
+      sound.playTone(600, 0.08, 'sine', 0.15);
+      buttonEl.textContent = `বাটনে রাখুন (${count}s)...`;
+
       const timer = setInterval(async () => {
         count--;
         if (count > 0) {
-          buttonEl.textContent = `Hover over button in ${count}s...`;
+          sound.playTone(600, 0.08, 'sine', 0.15);
+          buttonEl.textContent = `বাটনে রাখুন (${count}s)...`;
         } else {
           clearInterval(timer);
-          buttonEl.textContent = "Grabbing position...";
+          buttonEl.textContent = "ক্যাপচার হচ্ছে...";
           try {
             const res = await fetch('/api/autoclick/mouse-pos');
             const pos = await res.json();
             targetXInput.value = pos.x;
             targetYInput.value = pos.y;
             sound.playTradePlaced();
-            buttonEl.textContent = `Captured: (${pos.x}, ${pos.y})!`;
+            buttonEl.textContent = `✅ সেট: (${pos.x}, ${pos.y})!`;
             setTimeout(() => {
               buttonEl.textContent = origText;
               buttonEl.disabled = false;
-            }, 1800);
+            }, 2000);
           } catch (e) {
             buttonEl.textContent = "Failed";
             buttonEl.disabled = false;
