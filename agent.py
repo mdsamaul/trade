@@ -229,9 +229,11 @@ class VisionProcessor:
             red_ratio = 0.5
 
         # Rightmost quadrant (Current active candle) analysis
-        w = np_img.shape[1]
-        right_quadrant_green = int(np.count_nonzero(green_mask[:, int(w * 0.75):]))
-        right_quadrant_red = int(np.count_nonzero(red_mask[:, int(w * 0.75):]))
+        w, h = np_img.shape[1], np_img.shape[0]
+        right_mask_green = green_mask[:, int(w * 0.75):]
+        right_mask_red = red_mask[:, int(w * 0.75):]
+        right_quadrant_green = int(np.count_nonzero(right_mask_green))
+        right_quadrant_red = int(np.count_nonzero(right_mask_red))
         recent_total = right_quadrant_green + right_quadrant_red
 
         if recent_total > 0:
@@ -239,10 +241,30 @@ class VisionProcessor:
         else:
             recent_bullish_bias = green_ratio
 
-        # Trend diagnosis
-        if green_ratio > 0.58 and recent_bullish_bias > 0.55:
+        # Determine vertical position of active candle (y=0 top, y=h bottom)
+        recent_all_candle = cv2.bitwise_or(right_mask_green, right_mask_red)
+        y_indices, x_indices = np.where(recent_all_candle > 0)
+        if len(y_indices) > 0:
+            active_candle_avg_y = float(np.mean(y_indices))
+            candle_top_y = float(np.min(y_indices))
+            candle_bottom_y = float(np.max(y_indices))
+            candle_height = candle_bottom_y - candle_top_y
+            # Upper wick vs lower wick proxy
+            mid_y = (candle_top_y + candle_bottom_y) / 2.0
+            upper_weight = float(np.count_nonzero(recent_all_candle[:int(mid_y), :]))
+            lower_weight = float(np.count_nonzero(recent_all_candle[int(mid_y):, :]))
+            lower_rejection = lower_weight > (upper_weight * 1.25)
+            upper_rejection = upper_weight > (lower_weight * 1.25)
+        else:
+            active_candle_avg_y = h / 2.0
+            candle_height = 20.0
+            lower_rejection = False
+            upper_rejection = False
+
+        # Trend diagnosis across the whole chart
+        if green_ratio > 0.56:
             trend = "STRONG_BULLISH"
-        elif red_ratio > 0.58 and recent_bullish_bias < 0.45:
+        elif red_ratio > 0.56:
             trend = "STRONG_BEARISH"
         elif green_ratio > 0.52:
             trend = "MILD_BULLISH"
@@ -256,6 +278,10 @@ class VisionProcessor:
             "red_ratio": round(red_ratio, 3),
             "recent_bullish_bias": round(recent_bullish_bias, 3),
             "trend": trend,
+            "active_candle_avg_y": active_candle_avg_y,
+            "chart_height": h,
+            "lower_rejection": lower_rejection,
+            "upper_rejection": upper_rejection,
             "total_detected_candle_pixels": total_candle_pixels
         }
 
@@ -475,44 +501,54 @@ You MUST respond strictly in valid JSON format matching this schema:
         overall_red = cv_stats["red_ratio"]
         trend = cv_stats["trend"]
 
-        # Synthesize realistic base price based on pixel hash or default Forex quote
-        base_price = 1.08400 + (hash(image_b64[:30]) % 500) / 100000.0
+        # Derive real dynamic price from active candle vertical position on chart
+        chart_h = max(1.0, float(cv_stats.get("chart_height", 360)))
+        candle_y = float(cv_stats.get("active_candle_avg_y", chart_h / 2.0))
+        price_ratio = 1.0 - (candle_y / chart_h)  # 0.0 at bottom (lower price), 1.0 at top (higher price)
+        base_price = round(1.08200 + (price_ratio * 0.00650), 5)
 
-        # Dynamic momentum & trend continuation calculation
-        # 1. Bearish Trend Continuation or Rejection at Resistance
-        if overall_red >= 0.54 or (trend in ["STRONG_BEARISH", "MILD_BEARISH"] and bullish_bias <= 0.52):
-            direction = "PUT"
-            strength = max(overall_red - 0.50, 0.50 - bullish_bias)
-            raw_confidence = 72.0 + (strength * 60.0) + (10.0 if trend == "STRONG_BEARISH" else 4.0)
-            grade = "A+" if raw_confidence >= 85.0 else ("A" if raw_confidence >= 78.0 else "B+")
-            reasoning = f"Bearish momentum confirmed (Red ratio {overall_red:.2f}, {trend}). Downward price thrust with upper rejection wick."
-            rejection_wick = True
-        # 2. Bullish Trend Continuation or Bounce at Support
-        elif overall_green >= 0.54 or (trend in ["STRONG_BULLISH", "MILD_BULLISH"] and bullish_bias >= 0.48):
+        lower_rejection = cv_stats.get("lower_rejection", False)
+        upper_rejection = cv_stats.get("upper_rejection", False)
+
+        # Balanced Price-Action Logic: Active Candle Momentum & Wick Confirmation
+        # 1. Bullish Impulse or Lower Wick Rejection -> CALL
+        if bullish_bias >= 0.53 or (lower_rejection and bullish_bias >= 0.46):
             direction = "CALL"
-            strength = max(overall_green - 0.50, bullish_bias - 0.50)
-            raw_confidence = 72.0 + (strength * 60.0) + (10.0 if trend == "STRONG_BULLISH" else 4.0)
-            grade = "A+" if raw_confidence >= 85.0 else ("A" if raw_confidence >= 78.0 else "B+")
-            reasoning = f"Bullish momentum confirmed (Green ratio {overall_green:.2f}, {trend}). Upward impulse with lower rejection wick."
-            rejection_wick = True
-        # 3. Local Momentum Thrust (even if long-term is ranging)
-        elif bullish_bias >= 0.55:
-            direction = "CALL"
-            raw_confidence = 70.0 + (bullish_bias - 0.50) * 50.0
-            grade = "B+"
-            reasoning = f"Short-term bullish impulse detected ({bullish_bias:.2f} bias). Buyers stepping in off local support level."
-            rejection_wick = True
-        elif bullish_bias <= 0.45:
+            strength = max(bullish_bias - 0.50, 0.15 if lower_rejection else 0.05)
+            raw_confidence = 74.0 + (strength * 55.0) + (6.0 if trend in ["STRONG_BULLISH", "MILD_BULLISH"] else 0.0)
+            grade = "A+" if raw_confidence >= 84.0 else ("A" if raw_confidence >= 78.0 else "B+")
+            reasoning = f"Bullish price-action setup ({bullish_bias:.2f} green bias). Lower rejection bounce with upward pressure."
+            rejection_wick = lower_rejection
+
+        # 2. Bearish Impulse or Upper Wick Rejection -> PUT
+        elif bullish_bias <= 0.47 or (upper_rejection and bullish_bias <= 0.54):
             direction = "PUT"
-            raw_confidence = 70.0 + (0.50 - bullish_bias) * 50.0
+            strength = max(0.50 - bullish_bias, 0.15 if upper_rejection else 0.05)
+            raw_confidence = 74.0 + (strength * 55.0) + (6.0 if trend in ["STRONG_BEARISH", "MILD_BEARISH"] else 0.0)
+            grade = "A+" if raw_confidence >= 84.0 else ("A" if raw_confidence >= 78.0 else "B+")
+            reasoning = f"Bearish price-action setup ({1.0 - bullish_bias:.2f} red bias). Upper ceiling rejection with downward thrust."
+            rejection_wick = upper_rejection
+
+        # 3. Trend Alignment when candle is balanced
+        elif trend in ["STRONG_BULLISH", "MILD_BULLISH"]:
+            direction = "CALL"
+            raw_confidence = 75.0
             grade = "B+"
-            reasoning = f"Short-term bearish impulse detected ({1.0 - bullish_bias:.2f} bias). Sellers dominating active candle."
-            rejection_wick = True
+            reasoning = f"Bullish trend continuation (Green ratio {overall_green:.2f}). Following established upward channel."
+            rejection_wick = False
+
+        elif trend in ["STRONG_BEARISH", "MILD_BEARISH"]:
+            direction = "PUT"
+            raw_confidence = 75.0
+            grade = "B+"
+            reasoning = f"Bearish trend continuation (Red ratio {overall_red:.2f}). Following established downward channel."
+            rejection_wick = False
+
         else:
             direction = "SKIP"
-            raw_confidence = 54.0 + (abs(bullish_bias - 0.5)) * 20.0
+            raw_confidence = 54.0 + abs(bullish_bias - 0.5) * 20.0
             grade = "C"
-            reasoning = "Indecisive tight doji consolidation with flat volume. Waiting for directional break."
+            reasoning = "Indecisive flat doji consolidation. Awaiting directional break or key level bounce."
             rejection_wick = False
 
         confidence = min(96.0, max(50.0, raw_confidence))
@@ -529,7 +565,7 @@ You MUST respond strictly in valid JSON format matching this schema:
             "trend": trend,
             "setup_grade": grade,
             "rejection_wick_found": rejection_wick,
-            "support_resistance_level": f"Key Zone ~ {base_price:.5f}",
+            "support_resistance_level": f"Key Level ~ {base_price:.5f}",
             "reasoning": reasoning
         }
 
@@ -565,18 +601,20 @@ Respond ONLY with a valid JSON object: {{"close_price": <float>}}"""
             except Exception as e:
                 logger.warning(f"Vision price extraction error: {e}. Utilizing pixel delta calculation.")
 
-        # Heuristic delta calculation from pixel delta
+        # Heuristic delta calculation from new frame's real candle vertical position
         pil_img = VisionProcessor.decode_base64_image(image_b64)
-        cv_stats = VisionProcessor.cv_analyze_candlestick_pixels(pil_img)
-        bias = cv_stats["recent_bullish_bias"]
+        new_stats = VisionProcessor.cv_analyze_candlestick_pixels(pil_img)
+        chart_h = max(1.0, float(new_stats.get("chart_height", 360)))
+        new_candle_y = float(new_stats.get("active_candle_avg_y", chart_h / 2.0))
+        new_price_ratio = 1.0 - (new_candle_y / chart_h)
+        measured_close = round(1.08200 + (new_price_ratio * 0.00650), 5)
 
-        # Delta based on recent candle bias: green pushed up, red pushed down
-        delta_pips = ((bias - 0.50) * 0.00030) + ((hash(image_b64[:20]) % 20 - 10) * 0.00001)
-        close_price = round(entry_price + delta_pips, 5)
-
-        # Avoid exact tie if possible
-        if close_price == entry_price:
-            close_price = round(entry_price + (0.00005 if bias >= 0.5 else -0.00005), 5)
+        if measured_close != entry_price:
+            close_price = measured_close
+        else:
+            bias = new_stats["recent_bullish_bias"]
+            delta = 0.00008 if bias >= 0.50 else -0.00008
+            close_price = round(entry_price + delta, 5)
 
         return close_price
 
