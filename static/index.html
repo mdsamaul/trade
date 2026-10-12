@@ -1201,7 +1201,7 @@
         <!-- Calibration Green UP Button -->
         <div style="background: rgba(0, 255, 136, 0.05); border: 1px solid rgba(0, 255, 136, 0.3); padding: 14px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <strong style="color: var(--neon-green); font-size: 0.85rem;">🟢 UP / CALL Button Position (Green)</strong>
+            <strong style="color: var(--neon-green); font-size: 0.85rem;">🟢 UP / CALL Button Position (সবুজ বাটন - উপরে)</strong>
             <button class="btn btn-secondary font-mono" id="grabCallPosBtn" style="padding: 4px 10px; font-size: 0.75rem;">
               🎯 Grab Cursor in 3s
             </button>
@@ -1220,7 +1220,7 @@
         <!-- Calibration Red DOWN Button -->
         <div style="background: rgba(255, 51, 102, 0.05); border: 1px solid rgba(255, 51, 102, 0.3); padding: 14px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <strong style="color: var(--neon-red); font-size: 0.85rem;">🔴 DOWN / PUT Button Position (Red)</strong>
+            <strong style="color: var(--neon-red); font-size: 0.85rem;">🔴 DOWN / PUT Button Position (লাল বাটন - নিচে)</strong>
             <button class="btn btn-secondary font-mono" id="grabPutPosBtn" style="padding: 4px 10px; font-size: 0.75rem;">
               🎯 Grab Cursor in 3s
             </button>
@@ -1970,13 +1970,21 @@
     testPutClickBtn.addEventListener('click', () => triggerTestClickWithCountdown(testPutClickBtn, 'PUT'));
 
     saveAutoClickBtn.addEventListener('click', async () => {
+      const callY = parseInt(acCallY.value, 10);
+      const putY = parseInt(acPutY.value, 10);
+
+      if (acEnabledToggle.checked && putY <= callY) {
+        alert("⚠️ বাটন পজিশন ভুল হয়েছে!\n\nকোটেক্সে লাল (DOWN / PUT) বাটনটি সবুজ (UP / CALL) বাটনের নিচে থাকে।\nতাই Red PUT এর Y মান Green CALL এর চেয়ে বেশি হতে হবে।\n\nসঠিক স্ট্যান্ডার্ড মান:\n• Green CALL: X = 1805, Y = 485\n• Red PUT:   X = 1805, Y = 535");
+        return;
+      }
+
       const payload = {
         enabled: acEnabledToggle.checked,
         call_x: parseInt(acCallX.value, 10),
-        call_y: parseInt(acCallY.value, 10),
+        call_y: callY,
         put_x: parseInt(acPutX.value, 10),
-        put_y: parseInt(acPutY.value, 10),
-        restore_cursor: true
+        put_y: putY,
+        restore_cursor: false
       };
 
       try {

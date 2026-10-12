@@ -217,6 +217,23 @@ class VisionProcessor:
         red_mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
         red_mask = cv2.bitwise_or(red_mask1, red_mask2)
 
+        # Filter out UI noise: Top banner (deposit bonuses, flags, icons) & Bottom dock (time markers)
+        h, w = np_img.shape[0], np_img.shape[1]
+        top_cut = int(h * 0.16)
+        bottom_cut = int(h * 0.07)
+        left_cut = int(w * 0.05)
+        right_cut = int(w * 0.08)  # price ladder margin
+
+        green_mask[:top_cut, :] = 0
+        green_mask[-bottom_cut:, :] = 0
+        green_mask[:, :left_cut] = 0
+        green_mask[:, -right_cut:] = 0
+
+        red_mask[:top_cut, :] = 0
+        red_mask[-bottom_cut:, :] = 0
+        red_mask[:, :left_cut] = 0
+        red_mask[:, -right_cut:] = 0
+
         green_pixels = int(np.count_nonzero(green_mask))
         red_pixels = int(np.count_nonzero(red_mask))
         total_candle_pixels = green_pixels + red_pixels
@@ -228,47 +245,66 @@ class VisionProcessor:
             green_ratio = 0.5
             red_ratio = 0.5
 
-        # Rightmost quadrant (Current active candle) analysis
-        w, h = np_img.shape[1], np_img.shape[0]
-        right_mask_green = green_mask[:, int(w * 0.75):]
-        right_mask_red = red_mask[:, int(w * 0.75):]
-        right_quadrant_green = int(np.count_nonzero(right_mask_green))
-        right_quadrant_red = int(np.count_nonzero(right_mask_red))
-        recent_total = right_quadrant_green + right_quadrant_red
+        # Rightmost quadrant (Current active candle area)
+        recent_x_start = int(w * 0.72)
+        recent_x_end = w - right_cut
+        recent_mask_green = green_mask[:, recent_x_start:recent_x_end]
+        recent_mask_red = red_mask[:, recent_x_start:recent_x_end]
+        recent_g_pix = int(np.count_nonzero(recent_mask_green))
+        recent_r_pix = int(np.count_nonzero(recent_mask_red))
+        recent_total = recent_g_pix + recent_r_pix
 
         if recent_total > 0:
-            recent_bullish_bias = right_quadrant_green / recent_total
+            recent_bullish_bias = recent_g_pix / recent_total
         else:
             recent_bullish_bias = green_ratio
 
-        # Determine vertical position of active candle (y=0 top, y=h bottom)
-        recent_all_candle = cv2.bitwise_or(right_mask_green, right_mask_red)
-        y_indices, x_indices = np.where(recent_all_candle > 0)
-        if len(y_indices) > 0:
-            active_candle_avg_y = float(np.mean(y_indices))
-            candle_top_y = float(np.min(y_indices))
-            candle_bottom_y = float(np.max(y_indices))
-            candle_height = candle_bottom_y - candle_top_y
-            # Upper wick vs lower wick proxy
-            mid_y = (candle_top_y + candle_bottom_y) / 2.0
-            upper_weight = float(np.count_nonzero(recent_all_candle[:int(mid_y), :]))
-            lower_weight = float(np.count_nonzero(recent_all_candle[int(mid_y):, :]))
-            lower_rejection = lower_weight > (upper_weight * 1.25)
-            upper_rejection = upper_weight > (lower_weight * 1.25)
-        else:
-            active_candle_avg_y = h / 2.0
-            candle_height = 20.0
-            lower_rejection = False
-            upper_rejection = False
+        # Candlestick contour analysis in active trading quadrant
+        recent_all_candle = cv2.bitwise_or(recent_mask_green, recent_mask_red)
+        contours, _ = cv2.findContours(recent_all_candle, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        valid_boxes = []
+        for c in contours:
+            bx, by, bw, bh = cv2.boundingRect(c)
+            if bh >= 4:
+                valid_boxes.append((bx, by, bw, bh))
 
-        # Trend diagnosis across the whole chart
-        if green_ratio > 0.56:
+        valid_boxes = sorted(valid_boxes, key=lambda b: b[0])
+        lower_rejection = False
+        upper_rejection = False
+        active_candle_avg_y = h / 2.0
+        latest_color = "NEUTRAL"
+
+        if valid_boxes:
+            # Active forming candle is the rightmost candle
+            last_bx, last_by, last_bw, last_bh = valid_boxes[-1]
+            active_candle_avg_y = float(last_by + (last_bh / 2.0))
+            last_g = np.count_nonzero(recent_mask_green[last_by:last_by+last_bh, last_bx:last_bx+last_bw])
+            last_r = np.count_nonzero(recent_mask_red[last_by:last_by+last_bh, last_bx:last_bx+last_bw])
+            latest_color = "GREEN" if last_g >= last_r else "RED"
+
+            # Check rejection wicks on the latest candle:
+            # Upper third vs Lower third pixel density of the active candle
+            third_h = max(1, last_bh // 3)
+            top_slice = recent_all_candle[last_by:last_by+third_h, last_bx:last_bx+last_bw]
+            bottom_slice = recent_all_candle[last_by+last_bh-third_h:last_by+last_bh, last_bx:last_bx+last_bw]
+            top_pix = np.count_nonzero(top_slice)
+            bot_pix = np.count_nonzero(bottom_slice)
+
+            # Lower rejection wick: thin bottom tail with concentrated top body
+            if top_pix > (bot_pix * 1.8) and last_bh >= 8:
+                lower_rejection = True
+            # Upper rejection wick: thin top tail with concentrated bottom body
+            elif bot_pix > (top_pix * 1.8) and last_bh >= 8:
+                upper_rejection = True
+
+        # Trend diagnosis across chart canvas
+        if green_ratio > 0.55:
             trend = "STRONG_BULLISH"
-        elif red_ratio > 0.56:
+        elif red_ratio > 0.55:
             trend = "STRONG_BEARISH"
-        elif green_ratio > 0.52:
+        elif green_ratio > 0.51:
             trend = "MILD_BULLISH"
-        elif red_ratio > 0.52:
+        elif red_ratio > 0.51:
             trend = "MILD_BEARISH"
         else:
             trend = "SIDEWAYS_CONSOLIDATION"
@@ -282,6 +318,7 @@ class VisionProcessor:
             "chart_height": h,
             "lower_rejection": lower_rejection,
             "upper_rejection": upper_rejection,
+            "latest_candle_color": latest_color,
             "total_detected_candle_pixels": total_candle_pixels
         }
 
@@ -507,48 +544,55 @@ You MUST respond strictly in valid JSON format matching this schema:
         price_ratio = 1.0 - (candle_y / chart_h)  # 0.0 at bottom (lower price), 1.0 at top (higher price)
         base_price = round(1.08200 + (price_ratio * 0.00650), 5)
 
+        latest_color = cv_stats.get("latest_candle_color", "NEUTRAL")
         lower_rejection = cv_stats.get("lower_rejection", False)
         upper_rejection = cv_stats.get("upper_rejection", False)
 
-        # Balanced Price-Action Logic: Active Candle Momentum & Wick Confirmation
-        # 1. Bullish Impulse or Lower Wick Rejection -> CALL
-        if bullish_bias >= 0.53 or (lower_rejection and bullish_bias >= 0.46):
+        # Balanced Candlestick & Price-Action Engine (Fair CALL vs PUT evaluation)
+        # 1. Lower Rejection Pin-bar OR Active Bullish Green Expansion -> CALL
+        if lower_rejection or (latest_color == "GREEN" and bullish_bias >= 0.48) or bullish_bias >= 0.54:
             direction = "CALL"
-            strength = max(bullish_bias - 0.50, 0.15 if lower_rejection else 0.05)
-            raw_confidence = 74.0 + (strength * 55.0) + (6.0 if trend in ["STRONG_BULLISH", "MILD_BULLISH"] else 0.0)
+            strength = max(bullish_bias - 0.48, 0.15 if lower_rejection else 0.08)
+            raw_confidence = 75.0 + (strength * 48.0) + (5.0 if trend in ["STRONG_BULLISH", "MILD_BULLISH"] else 0.0)
             grade = "A+" if raw_confidence >= 84.0 else ("A" if raw_confidence >= 78.0 else "B+")
-            reasoning = f"Bullish price-action setup ({bullish_bias:.2f} green bias). Lower rejection bounce with upward pressure."
             rejection_wick = lower_rejection
+            if lower_rejection:
+                reasoning = f"Bullish pin-bar bounce ({bullish_bias:.2f} green bias). Strong rejection at lower support level."
+            else:
+                reasoning = f"Bullish momentum expansion ({bullish_bias:.2f} green bias). Active green candle breaking upward."
 
-        # 2. Bearish Impulse or Upper Wick Rejection -> PUT
-        elif bullish_bias <= 0.47 or (upper_rejection and bullish_bias <= 0.54):
+        # 2. Upper Rejection Shooting Star OR Active Bearish Red Breakdown -> PUT
+        elif upper_rejection or (latest_color == "RED" and bullish_bias <= 0.52) or bullish_bias <= 0.46:
             direction = "PUT"
-            strength = max(0.50 - bullish_bias, 0.15 if upper_rejection else 0.05)
-            raw_confidence = 74.0 + (strength * 55.0) + (6.0 if trend in ["STRONG_BEARISH", "MILD_BEARISH"] else 0.0)
+            strength = max(0.52 - bullish_bias, 0.15 if upper_rejection else 0.08)
+            raw_confidence = 75.0 + (strength * 48.0) + (5.0 if trend in ["STRONG_BEARISH", "MILD_BEARISH"] else 0.0)
             grade = "A+" if raw_confidence >= 84.0 else ("A" if raw_confidence >= 78.0 else "B+")
-            reasoning = f"Bearish price-action setup ({1.0 - bullish_bias:.2f} red bias). Upper ceiling rejection with downward thrust."
             rejection_wick = upper_rejection
+            if upper_rejection:
+                reasoning = f"Bearish shooting-star rejection ({1.0 - bullish_bias:.2f} red bias). Upper ceiling bounce with downward thrust."
+            else:
+                reasoning = f"Bearish momentum breakdown ({1.0 - bullish_bias:.2f} red bias). Active red candle pushing lower."
 
         # 3. Trend Alignment when candle is balanced
         elif trend in ["STRONG_BULLISH", "MILD_BULLISH"]:
             direction = "CALL"
             raw_confidence = 75.0
             grade = "B+"
-            reasoning = f"Bullish trend continuation (Green ratio {overall_green:.2f}). Following established upward channel."
+            reasoning = f"Bullish trend continuation (Green ratio {overall_green:.2f}). Following upward market structure."
             rejection_wick = False
 
         elif trend in ["STRONG_BEARISH", "MILD_BEARISH"]:
             direction = "PUT"
             raw_confidence = 75.0
             grade = "B+"
-            reasoning = f"Bearish trend continuation (Red ratio {overall_red:.2f}). Following established downward channel."
+            reasoning = f"Bearish trend continuation (Red ratio {overall_red:.2f}). Following downward market structure."
             rejection_wick = False
 
         else:
             direction = "SKIP"
             raw_confidence = 54.0 + abs(bullish_bias - 0.5) * 20.0
             grade = "C"
-            reasoning = "Indecisive flat doji consolidation. Awaiting directional break or key level bounce."
+            reasoning = "Indecisive flat consolidation. Awaiting directional break or key level bounce."
             rejection_wick = False
 
         confidence = min(96.0, max(50.0, raw_confidence))
