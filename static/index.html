@@ -849,6 +849,9 @@
       <button class="btn btn-icon" id="soundToggleBtn" title="Toggle Audio Chimes">
         <span id="soundIcon">🔊</span>
       </button>
+      <button class="btn btn-secondary" id="autoClickModalBtn" style="border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">
+        🎯 Quotex Auto-Clicker
+      </button>
       <button class="btn btn-secondary" id="configBtn">
         ⚙️ Settings & API
       </button>
@@ -1004,6 +1007,9 @@
             </div>
 
             <div class="control-group">
+              <span id="autoClickStatusBadge" class="font-mono" style="font-size: 0.76rem; padding: 5px 10px; border-radius: 4px; background: rgba(255, 51, 102, 0.15); color: var(--neon-red); border: 1px solid rgba(255,51,102,0.3); font-weight: 700;">
+                🖱️ AUTO-CLICK: OFF
+              </span>
               <span class="control-label">Candle Timeframe:</span>
               <select id="timeframeSelect">
                 <option value="15">15 Seconds</option>
@@ -1166,6 +1172,77 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" id="cancelConfigBtn">Cancel</button>
         <button class="btn btn-primary" id="saveConfigBtn">Save Configuration</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Direct Quotex Auto-Clicker Calibration Modal -->
+  <div class="modal-overlay" id="autoClickModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="font-brand" style="font-size: 1rem; color: var(--neon-cyan);">🎯 DIRECT QUOTEX AUTO-CLICKER</h3>
+        <button class="btn btn-icon" id="closeAutoClickModalBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="background: rgba(0, 240, 255, 0.08); border: 1px solid rgba(0, 240, 255, 0.2); padding: 12px; border-radius: 6px; font-size: 0.82rem; line-height: 1.45;">
+          ⚡ <strong>সরাসরি Quotex Demo-তে অটো-ট্রেড:</strong><br>
+          AI যখনই <strong style="color: var(--neon-green);">CALL</strong> বা <strong style="color: var(--neon-red);">PUT</strong> সিগন্যাল ডিটেক্ট করবে, ব্যাকএন্ড স্বয়ংক্রিয়ভাবে আপনার কোটেক্সের সবুজ বা লাল বোতামে লাইভ মাউস ক্লিক এক্সিকিউট করবে!
+        </div>
+
+        <!-- Master Switch -->
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: rgba(20, 26, 40, 0.85); border-radius: 6px; border: 1px solid var(--border-color);">
+          <div>
+            <strong style="font-size: 0.9rem;">Enable Direct Auto-Clicking</strong>
+            <p style="font-size: 0.75rem; color: var(--text-muted);">Quotex Demo অ্যাকাউন্টে অটো-ক্লিক চালু করুন</p>
+          </div>
+          <input type="checkbox" id="acEnabledToggle" style="transform: scale(1.6); cursor: pointer; accent-color: var(--neon-cyan);">
+        </div>
+
+        <!-- Calibration Green UP Button -->
+        <div style="background: rgba(0, 255, 136, 0.05); border: 1px solid rgba(0, 255, 136, 0.3); padding: 14px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <strong style="color: var(--neon-green); font-size: 0.85rem;">🟢 UP / CALL Button Position (Green)</strong>
+            <button class="btn btn-secondary font-mono" id="grabCallPosBtn" style="padding: 4px 10px; font-size: 0.75rem;">
+              🎯 Grab Cursor in 3s
+            </button>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <label style="font-size: 0.75rem; color: var(--text-muted);">X:</label>
+            <input type="number" id="acCallX" value="1805" class="font-mono" style="width: 85px;">
+            <label style="font-size: 0.75rem; color: var(--text-muted);">Y:</label>
+            <input type="number" id="acCallY" value="485" class="font-mono" style="width: 85px;">
+            <button class="btn btn-secondary font-mono" id="testCallClickBtn" style="padding: 4px 12px; font-size: 0.75rem; border-color: var(--neon-green); color: var(--neon-green);">
+              🖱️ Test Click
+            </button>
+          </div>
+        </div>
+
+        <!-- Calibration Red DOWN Button -->
+        <div style="background: rgba(255, 51, 102, 0.05); border: 1px solid rgba(255, 51, 102, 0.3); padding: 14px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <strong style="color: var(--neon-red); font-size: 0.85rem;">🔴 DOWN / PUT Button Position (Red)</strong>
+            <button class="btn btn-secondary font-mono" id="grabPutPosBtn" style="padding: 4px 10px; font-size: 0.75rem;">
+              🎯 Grab Cursor in 3s
+            </button>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <label style="font-size: 0.75rem; color: var(--text-muted);">X:</label>
+            <input type="number" id="acPutX" value="1805" class="font-mono" style="width: 85px;">
+            <label style="font-size: 0.75rem; color: var(--text-muted);">Y:</label>
+            <input type="number" id="acPutY" value="535" class="font-mono" style="width: 85px;">
+            <button class="btn btn-secondary font-mono" id="testPutClickBtn" style="padding: 4px 12px; font-size: 0.75rem; border-color: var(--neon-red); color: var(--neon-red);">
+              🖱️ Test Click
+            </button>
+          </div>
+        </div>
+
+        <div style="font-size: 0.76rem; color: var(--text-muted); line-height: 1.4;">
+          👉 <strong>সহজ টিপস:</strong> "Grab Cursor in 3s" বাটনে চাপ দিন, তারপর ৩ সেকেন্ডের মধ্যে মাউসটি কোটেক্সের সবুজ বা লাল বাটনের ওপর নিয়ে স্থির রাখুন। কোঅর্ডিনেট অটোমেটিক কপি হয়ে যাবে!
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelAutoClickBtn">Cancel</button>
+        <button class="btn btn-primary" id="saveAutoClickBtn">Save & Apply</button>
       </div>
     </div>
   </div>
@@ -1763,9 +1840,163 @@
       }
     });
 
+    // =========================================================================
+    // DIRECT QUOTEX AUTO-CLICKER CONTROLLER
+    // =========================================================================
+    const autoClickModalBtn = document.getElementById('autoClickModalBtn');
+    const autoClickModal = document.getElementById('autoClickModal');
+    const closeAutoClickModalBtn = document.getElementById('closeAutoClickModalBtn');
+    const cancelAutoClickBtn = document.getElementById('cancelAutoClickBtn');
+    const saveAutoClickBtn = document.getElementById('saveAutoClickBtn');
+    const autoClickStatusBadge = document.getElementById('autoClickStatusBadge');
+
+    const acEnabledToggle = document.getElementById('acEnabledToggle');
+    const acCallX = document.getElementById('acCallX');
+    const acCallY = document.getElementById('acCallY');
+    const acPutX = document.getElementById('acPutX');
+    const acPutY = document.getElementById('acPutY');
+    const grabCallPosBtn = document.getElementById('grabCallPosBtn');
+    const grabPutPosBtn = document.getElementById('grabPutPosBtn');
+    const testCallClickBtn = document.getElementById('testCallClickBtn');
+    const testPutClickBtn = document.getElementById('testPutClickBtn');
+
+    async function fetchAutoClickConfig() {
+      try {
+        const res = await fetch('/api/autoclick/config');
+        const data = await res.json();
+        acEnabledToggle.checked = data.enabled;
+        acCallX.value = data.call_x;
+        acCallY.value = data.call_y;
+        acPutX.value = data.put_x;
+        acPutY.value = data.put_y;
+
+        if (data.enabled) {
+          autoClickStatusBadge.innerHTML = '⚡ AUTO-CLICK: ACTIVE';
+          autoClickStatusBadge.style.background = 'rgba(0, 255, 136, 0.2)';
+          autoClickStatusBadge.style.color = 'var(--neon-green)';
+          autoClickStatusBadge.style.borderColor = 'var(--neon-green)';
+        } else {
+          autoClickStatusBadge.innerHTML = '🖱️ AUTO-CLICK: OFF';
+          autoClickStatusBadge.style.background = 'rgba(255, 51, 102, 0.15)';
+          autoClickStatusBadge.style.color = 'var(--neon-red)';
+          autoClickStatusBadge.style.borderColor = 'rgba(255, 51, 102, 0.3)';
+        }
+      } catch (e) {
+        console.warn("Failed to fetch autoclick config:", e);
+      }
+    }
+
+    autoClickModalBtn.addEventListener('click', () => {
+      fetchAutoClickConfig();
+      autoClickModal.classList.add('open');
+    });
+
+    function closeAutoClickModal() {
+      autoClickModal.classList.remove('open');
+    }
+
+    closeAutoClickModalBtn.addEventListener('click', closeAutoClickModal);
+    cancelAutoClickBtn.addEventListener('click', closeAutoClickModal);
+
+    function triggerGrabCountdown(buttonEl, targetXInput, targetYInput) {
+      let count = 3;
+      buttonEl.disabled = true;
+      const origText = buttonEl.textContent;
+      buttonEl.textContent = `Hover over button in ${count}s...`;
+      
+      const timer = setInterval(async () => {
+        count--;
+        if (count > 0) {
+          buttonEl.textContent = `Hover over button in ${count}s...`;
+        } else {
+          clearInterval(timer);
+          buttonEl.textContent = "Grabbing position...";
+          try {
+            const res = await fetch('/api/autoclick/mouse-pos');
+            const pos = await res.json();
+            targetXInput.value = pos.x;
+            targetYInput.value = pos.y;
+            sound.playTradePlaced();
+            buttonEl.textContent = `Captured: (${pos.x}, ${pos.y})!`;
+            setTimeout(() => {
+              buttonEl.textContent = origText;
+              buttonEl.disabled = false;
+            }, 1800);
+          } catch (e) {
+            buttonEl.textContent = "Failed";
+            buttonEl.disabled = false;
+          }
+        }
+      }, 1000);
+    }
+
+    grabCallPosBtn.addEventListener('click', () => triggerGrabCountdown(grabCallPosBtn, acCallX, acCallY));
+    grabPutPosBtn.addEventListener('click', () => triggerGrabCountdown(grabPutPosBtn, acPutX, acPutY));
+
+    async function triggerTestClickWithCountdown(buttonEl, direction) {
+      const origText = buttonEl.textContent;
+      buttonEl.disabled = true;
+      let count = 3;
+      buttonEl.textContent = `Quotex-এ যান (${count}s)...`;
+
+      const cdTimer = setInterval(async () => {
+        count--;
+        if (count > 0) {
+          buttonEl.textContent = `Quotex-এ যান (${count}s)...`;
+        } else {
+          clearInterval(cdTimer);
+          buttonEl.textContent = "⚡ Clicking NOW...";
+          try {
+            const res = await fetch('/api/autoclick/test-click', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ direction: direction })
+            });
+            const d = await res.json();
+            sound.playTradePlaced();
+            buttonEl.textContent = `✅ Clicked (${d.clicked_at.x}, ${d.clicked_at.y})!`;
+          } catch (e) {
+            buttonEl.textContent = "❌ Failed";
+          }
+          setTimeout(() => {
+            buttonEl.textContent = origText;
+            buttonEl.disabled = false;
+          }, 2000);
+        }
+      }, 1000);
+    }
+
+    testCallClickBtn.addEventListener('click', () => triggerTestClickWithCountdown(testCallClickBtn, 'CALL'));
+    testPutClickBtn.addEventListener('click', () => triggerTestClickWithCountdown(testPutClickBtn, 'PUT'));
+
+    saveAutoClickBtn.addEventListener('click', async () => {
+      const payload = {
+        enabled: acEnabledToggle.checked,
+        call_x: parseInt(acCallX.value, 10),
+        call_y: parseInt(acCallY.value, 10),
+        put_x: parseInt(acPutX.value, 10),
+        put_y: parseInt(acPutY.value, 10),
+        restore_cursor: true
+      };
+
+      try {
+        await fetch('/api/autoclick/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        closeAutoClickModal();
+        fetchAutoClickConfig();
+        alert(payload.enabled ? "⚡ Direct Auto-Clicking is now ENABLED on Quotex!" : "Auto-Clicking is DISABLED.");
+      } catch (e) {
+        alert("Failed to save auto-clicker config.");
+      }
+    });
+
     // Initial load
     fetchSessionStatus();
     fetchTradeHistory();
+    fetchAutoClickConfig();
   </script>
 </body>
 </html>

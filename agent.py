@@ -869,6 +869,142 @@ class TradingSessionManager:
             logger.info("Session reset to initial demo parameters.")
 
 
+# ==============================================================================
+# DIRECT QUOTEX AUTO-CLICKER (REAL TRADE EXECUTION)
+# ==============================================================================
+
+def attach_to_input_desktop() -> bool:
+    """
+    Ensures the calling thread is attached to the user's interactive Windows desktop (Default).
+    Critical in Windows services or sandbox processes where threads default to an isolated desktop.
+    """
+    try:
+        import ctypes
+        DESKTOP_ALL = 0x01FF
+        hDesk = ctypes.windll.user32.OpenInputDesktop(0, False, DESKTOP_ALL)
+        if not hDesk:
+            hDesk = ctypes.windll.user32.OpenDesktopW("Default", 0, False, DESKTOP_ALL)
+        if hDesk:
+            res = ctypes.windll.user32.SetThreadDesktop(hDesk)
+            return bool(res)
+    except Exception as e:
+        logger.warning(f"Could not attach to input desktop: {e}")
+    return False
+
+
+class AutoClickerConfig(BaseModel):
+    enabled: bool = True
+    call_x: int = 1805
+    call_y: int = 485
+    put_x: int = 1805
+    put_y: int = 535
+    restore_cursor: bool = False
+
+
+class QuotexAutoClicker:
+    """Automates mouse clicking on Quotex UP / DOWN buttons on trade signals."""
+    def __init__(self):
+        self.config = AutoClickerConfig()
+        self.lock = threading.Lock()
+
+    def update_config(self, enabled=None, call_x=None, call_y=None, put_x=None, put_y=None, restore_cursor=None):
+        with self.lock:
+            if enabled is not None: self.config.enabled = bool(enabled)
+            if call_x is not None: self.config.call_x = int(call_x)
+            if call_y is not None: self.config.call_y = int(call_y)
+            if put_x is not None: self.config.put_x = int(put_x)
+            if put_y is not None: self.config.put_y = int(put_y)
+            if restore_cursor is not None: self.config.restore_cursor = bool(restore_cursor)
+
+    def execute_click(self, direction: str) -> bool:
+        with self.lock:
+            if not self.config.enabled:
+                return False
+            target_x = self.config.call_x if direction == "CALL" else self.config.put_x
+            target_y = self.config.call_y if direction == "CALL" else self.config.put_y
+            restore = self.config.restore_cursor
+
+        def _click_worker():
+            try:
+                import ctypes
+                from ctypes import wintypes
+                import time
+
+                # Attach this worker thread directly to the interactive desktop
+                attach_to_input_desktop()
+
+                orig_pt = wintypes.POINT()
+                has_orig = bool(ctypes.windll.user32.GetCursorPos(ctypes.byref(orig_pt)))
+
+                # Hardware-level Win32 Mouse Event
+                ctypes.windll.user32.SetCursorPos(int(target_x), int(target_y))
+                time.sleep(0.04)
+
+                # Left Mouse Down (0x0002)
+                ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
+                time.sleep(0.12)  # Realistic 120ms human press duration for web buttons
+                # Left Mouse Up (0x0004)
+                ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
+                logger.info(f"⚡ [DIRECT QUOTEX HARDWARE CLICK] Successfully clicked {direction} at ({target_x}, {target_y})!")
+
+                if restore and has_orig:
+                    time.sleep(0.08)
+                    ctypes.windll.user32.SetCursorPos(orig_pt.x, orig_pt.y)
+
+            except Exception as e:
+                logger.error(f"Hardware click error: {e}")
+                try:
+                    import pyautogui
+                    pyautogui.FAILSAFE = False
+                    pyautogui.click(x=target_x, y=target_y)
+                except Exception as py_err:
+                    logger.error(f"PyAutoGUI click error: {py_err}")
+
+        threading.Thread(target=_click_worker, daemon=True).start()
+        return True
+
+    def test_click(self, direction: str) -> Dict[str, Any]:
+        with self.lock:
+            target_x = self.config.call_x if direction == "CALL" else self.config.put_x
+            target_y = self.config.call_y if direction == "CALL" else self.config.put_y
+
+        try:
+            import ctypes
+            import time
+
+            attach_to_input_desktop()
+
+            ctypes.windll.user32.SetCursorPos(int(target_x), int(target_y))
+            time.sleep(0.05)
+            ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
+            time.sleep(0.12)
+            ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
+            logger.info(f"⚡ [TEST CLICK] Successfully clicked {direction} at ({target_x}, {target_y})")
+            return {"success": True, "clicked_at": {"x": target_x, "y": target_y}, "direction": direction}
+        except Exception as e:
+            logger.error(f"Test click error: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_mouse_position(self) -> Dict[str, int]:
+        try:
+            import ctypes
+            from ctypes import wintypes
+            attach_to_input_desktop()
+            pt = wintypes.POINT()
+            if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+                return {"x": int(pt.x), "y": int(pt.y)}
+        except Exception as e:
+            logger.warning(f"GetCursorPos error: {e}")
+        try:
+            import pyautogui
+            pos = pyautogui.position()
+            return {"x": int(pos.x), "y": int(pos.y)}
+        except Exception:
+            return {"x": 0, "y": 0}
+
+
 # Global instances initialized
 trading_session = TradingSessionManager()
 vision_engine = VisionAIEngine()
+auto_clicker = QuotexAutoClicker()
+

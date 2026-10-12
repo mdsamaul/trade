@@ -23,6 +23,7 @@ load_dotenv()
 from agent import (
     trading_session,
     vision_engine,
+    auto_clicker,
     VisionProcessor,
     STRICTNESS_TIERS,
     SessionStats,
@@ -166,6 +167,9 @@ async def analyze_and_trade(payload: AnalyzeRequest):
                         "key_level": decision_data.get("support_resistance_level", "")
                     }
                 )
+                # Execute direct mouse click on Quotex UP / DOWN button if enabled
+                if auto_clicker.config.enabled:
+                    auto_clicker.execute_click(direction)
 
         return {
             "success": True,
@@ -292,6 +296,9 @@ async def auto_cycle(payload: AutoCycleRequest):
                 timeframe_seconds=payload.timeframe_seconds
             )
             action = f"TRADE_OPENED_{direction}"
+            # Execute direct mouse click on Quotex UP / DOWN button if enabled
+            if auto_clicker.config.enabled:
+                auto_clicker.execute_click(direction)
         else:
             action = "SKIPPED_FILTERED"
 
@@ -306,6 +313,56 @@ async def auto_cycle(payload: AutoCycleRequest):
     except Exception as e:
         logger.exception("Error during auto_cycle execution")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==============================================================================
+# DIRECT QUOTEX AUTO-CLICKER ENDPOINTS
+# ==============================================================================
+
+class AutoClickUpdateRequest(BaseModel):
+    enabled: Optional[bool] = None
+    call_x: Optional[int] = None
+    call_y: Optional[int] = None
+    put_x: Optional[int] = None
+    put_y: Optional[int] = None
+    restore_cursor: Optional[bool] = None
+
+
+class TestClickRequest(BaseModel):
+    direction: str = Field(..., description="CALL or PUT")
+
+
+@app.get("/api/autoclick/config")
+async def get_autoclick_config():
+    """Returns current auto-clicker status and target coordinates."""
+    return auto_clicker.config.dict()
+
+
+@app.post("/api/autoclick/config")
+async def update_autoclick_config(payload: AutoClickUpdateRequest):
+    """Updates auto-clicker coordinates and enable/disable state."""
+    auto_clicker.update_config(
+        enabled=payload.enabled,
+        call_x=payload.call_x,
+        call_y=payload.call_y,
+        put_x=payload.put_x,
+        put_y=payload.put_y,
+        restore_cursor=payload.restore_cursor
+    )
+    return {"success": True, "config": auto_clicker.config.dict()}
+
+
+@app.get("/api/autoclick/mouse-pos")
+async def get_mouse_position():
+    """Returns live screen coordinates of the user's cursor for calibration."""
+    return auto_clicker.get_mouse_position()
+
+
+@app.post("/api/autoclick/test-click")
+async def test_autoclick(payload: TestClickRequest):
+    """Performs an immediate single test click on the target button."""
+    return auto_clicker.test_click(payload.direction.upper())
+
 
 
 @app.post("/api/reset")
