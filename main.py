@@ -242,8 +242,9 @@ async def auto_cycle(payload: AutoCycleRequest):
         active = trading_session.active_trade
         now = time.time()
 
-        # Step 1: Check if pending trade needs verification
-        if active and (now >= active.expiry_timestamp or payload.force_verify):
+        resolved_trade = None
+        # Step 1: Check if pending trade needs verification (with 3-second grace window for candle boundary sync)
+        if active and (now >= (active.expiry_timestamp - 3.0) or payload.force_verify):
             # Verify pending trade
             raw_pil = VisionProcessor.decode_base64_image(payload.image_base64)
             cropped_pil = VisionProcessor.auto_crop_quotex_chart(raw_pil, payload.crop_bounds)
@@ -254,14 +255,10 @@ async def auto_cycle(payload: AutoCycleRequest):
                 entry_price=active.entry_price,
                 direction=active.direction
             )
-            resolved = trading_session.resolve_trade(close_price=close_price, trade_id=active.id)
-            return {
-                "cycle_action": "TRADE_VERIFIED",
-                "trade": resolved.dict(),
-                "session": trading_session.get_stats().dict()
-            }
+            resolved_trade = trading_session.resolve_trade(close_price=close_price, trade_id=active.id)
+            active = None  # Trade resolved; ready to scan for next setup
 
-        # Step 2: If trade is still in progress, wait
+        # Step 2: If a trade is still in progress (not expired), wait
         if active and now < active.expiry_timestamp:
             remaining = int(active.expiry_timestamp - now)
             return {
@@ -271,7 +268,7 @@ async def auto_cycle(payload: AutoCycleRequest):
                 "session": trading_session.get_stats().dict()
             }
 
-        # Step 3: No active trade -> Ingest and analyze frame
+        # Step 3: No active trade (either none open or just resolved) -> Ingest and analyze frame
         raw_pil = VisionProcessor.decode_base64_image(payload.image_base64)
         cropped_pil = VisionProcessor.auto_crop_quotex_chart(raw_pil, payload.crop_bounds)
         cropped_b64 = VisionProcessor.encode_image_base64(cropped_pil)
@@ -302,10 +299,14 @@ async def auto_cycle(payload: AutoCycleRequest):
         else:
             action = "SKIPPED_FILTERED"
 
+        if resolved_trade:
+            action = f"TRADE_RESOLVED_{resolved_trade.outcome}" + (f"_AND_OPENED_{direction}" if opened_trade else "")
+
         return {
             "cycle_action": action,
             "decision": decision,
-            "trade": opened_trade.dict() if opened_trade else None,
+            "trade": opened_trade.dict() if opened_trade else (resolved_trade.dict() if resolved_trade else None),
+            "resolved_trade": resolved_trade.dict() if resolved_trade else None,
             "cropped_preview_b64": cropped_b64,
             "session": trading_session.get_stats().dict()
         }
