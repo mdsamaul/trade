@@ -1226,9 +1226,9 @@
           </div>
           <div style="display: flex; gap: 10px; align-items: center;">
             <label style="font-size: 0.75rem; color: var(--text-muted);">X:</label>
-            <input type="number" id="acCallX" value="1805" class="font-mono" style="width: 85px;">
+            <input type="number" id="acCallX" value="4482" class="font-mono" style="width: 85px;">
             <label style="font-size: 0.75rem; color: var(--text-muted);">Y:</label>
-            <input type="number" id="acCallY" value="485" class="font-mono" style="width: 85px;">
+            <input type="number" id="acCallY" value="486" class="font-mono" style="width: 85px;">
             <button class="btn btn-secondary font-mono" id="testCallClickBtn" style="padding: 4px 12px; font-size: 0.75rem; border-color: var(--neon-green); color: var(--neon-green);">
               🖱️ Test Click
             </button>
@@ -1245,9 +1245,9 @@
           </div>
           <div style="display: flex; gap: 10px; align-items: center;">
             <label style="font-size: 0.75rem; color: var(--text-muted);">X:</label>
-            <input type="number" id="acPutX" value="1805" class="font-mono" style="width: 85px;">
+            <input type="number" id="acPutX" value="4442" class="font-mono" style="width: 85px;">
             <label style="font-size: 0.75rem; color: var(--text-muted);">Y:</label>
-            <input type="number" id="acPutY" value="538" class="font-mono" style="width: 85px;">
+            <input type="number" id="acPutY" value="531" class="font-mono" style="width: 85px;">
             <button class="btn btn-secondary font-mono" id="testPutClickBtn" style="padding: 4px 12px; font-size: 0.75rem; border-color: var(--neon-red); color: var(--neon-red);">
               🖱️ Test Click
             </button>
@@ -1603,9 +1603,14 @@
     // =========================================================================
     // EXECUTION CYCLE & VERIFICATION
     // =========================================================================
-    async function executeCycle(forceVerification = false) {
-      let b64 = captureCurrentFrameBase64();
+    let isCycleBusy = false;
+    let lastScanBucket = -1;
 
+    async function executeCycle(forceVerification = false) {
+      if (isCycleBusy && !forceVerification) return;
+      isCycleBusy = true;
+
+      let b64 = captureCurrentFrameBase64();
       if (!b64) {
         // If screen not shared yet, provide simulated mock frame for demonstration
         b64 = generateMockChartCanvasBase64();
@@ -1629,6 +1634,8 @@
 
       } catch (err) {
         console.error("Cycle execution error:", err);
+      } finally {
+        isCycleBusy = false;
       }
     }
 
@@ -1662,12 +1669,11 @@
         aiRationaleText.textContent = dec.reasoning;
       }
 
-      // Audio alerts
-      if (data.cycle_action && data.cycle_action.startsWith('TRADE_OPENED')) {
-        sound.playTradePlaced();
-      } else if (data.cycle_action === 'TRADE_VERIFIED') {
+      // Outcome Verification Audio & History
+      const resolved = data.resolved_trade || (data.cycle_action === 'TRADE_VERIFIED' ? data.trade : null);
+      if (resolved) {
         fetchTradeHistory();
-        const outcome = data.trade.outcome;
+        const outcome = resolved.outcome;
         if (outcome === 'WIN') {
           sound.playWin();
           if (data.session && data.session.target_achieved) {
@@ -1676,6 +1682,11 @@
         } else if (outcome === 'LOSS') {
           sound.playLoss();
         }
+      }
+
+      // New Trade Placed Audio
+      if (data.cycle_action && data.cycle_action.includes('TRADE_OPENED')) {
+        sound.playTradePlaced();
       }
     }
 
@@ -1718,8 +1729,38 @@
     }
 
     // =========================================================================
-    // CANDLE COUNTDOWN & AUTOMATION TIMER LOOP
+    // REAL-CLOCK CANDLE COUNTDOWN & SENIOR TRADER EXECUTION SYNC
     // =========================================================================
+    function updateCandleClock() {
+      const now = new Date();
+      const currentSeconds = now.getSeconds();
+
+      // Quotex candles are strictly bound to system clock (00 to 59 seconds)
+      const secondsIntoCandle = currentSeconds % candleTimeframe;
+      let secondsLeft = candleTimeframe - secondsIntoCandle;
+      if (secondsLeft === 0) secondsLeft = candleTimeframe;
+      candleSecondsLeft = secondsLeft;
+
+      // Update progress bar
+      const pct = (secondsLeft / candleTimeframe) * 100;
+      if (cycleProgressBar) cycleProgressBar.style.width = `${pct}%`;
+      if (cycleSecondsRemaining) cycleSecondsRemaining.textContent = `${secondsLeft}s`;
+
+      // Update active trade countdown
+      if (activePendingTrade && atCountdown) {
+        atCountdown.textContent = `${Math.max(0, secondsLeft)}s`;
+      }
+
+      // Senior Trader Precision Timing:
+      // At second 58 (secondsLeft === 2), the current 1-minute candle is 97% formed.
+      // We trigger analysis and click execution so the trade enters right at the candle boundary (second 59/00)!
+      const currentBucket = Math.floor(now.getTime() / (candleTimeframe * 1000));
+      if (autoTradingActive && secondsLeft === 2 && lastScanBucket !== currentBucket && !isCycleBusy) {
+        lastScanBucket = currentBucket;
+        executeCycle();
+      }
+    }
+
     function startAutonomousLoop() {
       autoTradingActive = true;
       toggleAutoBtn.innerHTML = '⏹ Stop Autonomous Agent';
@@ -1727,31 +1768,11 @@
       toggleAutoBtn.classList.add('btn-danger');
 
       candleTimeframe = parseInt(timeframeSelect.value, 10);
-      candleSecondsLeft = candleTimeframe;
+      updateCandleClock();
 
       clearInterval(cycleIntervalTimer);
-      cycleIntervalTimer = setInterval(() => {
-        candleSecondsLeft--;
-
-        if (candleSecondsLeft < 0) {
-          candleSecondsLeft = candleTimeframe;
-        }
-
-        // Update progress bar
-        const pct = (candleSecondsLeft / candleTimeframe) * 100;
-        cycleProgressBar.style.width = `${pct}%`;
-        cycleSecondsRemaining.textContent = `${candleSecondsLeft}s`;
-
-        // Update active trade countdown
-        if (activePendingTrade) {
-          atCountdown.textContent = `${Math.max(0, candleSecondsLeft)}s`;
-        }
-
-        // Trigger scan 3 seconds before candle close or on close
-        if (candleSecondsLeft === 3 || candleSecondsLeft === 0) {
-          executeCycle();
-        }
-      }, 1000);
+      // Run every 400ms to guarantee hitting second 58 without timing drift
+      cycleIntervalTimer = setInterval(updateCandleClock, 400);
     }
 
     function stopAutonomousLoop() {
@@ -2100,6 +2121,8 @@
     fetchSessionStatus();
     fetchTradeHistory();
     fetchAutoClickConfig();
+    updateCandleClock();
+    setInterval(updateCandleClock, 500);
   </script>
 </body>
 </html>

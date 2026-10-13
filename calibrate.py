@@ -14,9 +14,10 @@ import numpy as np
 def attach_to_desktop():
     try:
         user32 = ctypes.windll.user32
-        hDesk = user32.OpenInputDesktop(0, False, 0x01FF)
+        DESKTOP_ALL = 0x01FF
+        hDesk = user32.OpenInputDesktop(0, False, DESKTOP_ALL)
         if not hDesk:
-            hDesk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+            hDesk = user32.OpenDesktopW("Default", 0, False, DESKTOP_ALL)
         if hDesk:
             user32.SetThreadDesktop(hDesk)
             return True
@@ -27,26 +28,54 @@ def attach_to_desktop():
 def ensure_quotex_focused():
     try:
         user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        attach_to_desktop()
+
         found_hwnd = None
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
-
+        candidates = []
         def enum_cb(hwnd, lp):
-            nonlocal found_hwnd
-            buf = ctypes.create_unicode_buffer(256)
-            if user32.IsWindowVisible(hwnd) and user32.GetWindowTextW(hwnd, buf, 256) > 0:
-                title = buf.value.lower()
-                if "demo trading | quotex" in title or ("quotex" in title and "chrome" in title):
-                    found_hwnd = hwnd
-                    return False
+            if user32.IsWindowVisible(hwnd):
+                buf = ctypes.create_unicode_buffer(512)
+                if user32.GetWindowTextW(hwnd, buf, 512) > 0:
+                    title = buf.value.lower()
+                    if "quotex" in title and "autonomous paper-trading" not in title:
+                        candidates.append(hwnd)
             return True
 
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
         user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+        if candidates:
+            found_hwnd = candidates[0]
+
         if found_hwnd:
-            user32.ShowWindow(found_hwnd, 3)  # Maximize
+            cur_fg = user32.GetForegroundWindow()
+            cur_thread = kernel32.GetCurrentThreadId()
+            fg_thread = user32.GetWindowThreadProcessId(cur_fg, None) if cur_fg else 0
+            target_thread = user32.GetWindowThreadProcessId(found_hwnd, None)
+
+            if fg_thread and fg_thread != cur_thread:
+                user32.AttachThreadInput(cur_thread, fg_thread, True)
+            if target_thread and target_thread != cur_thread:
+                user32.AttachThreadInput(cur_thread, target_thread, True)
+
+            user32.AllowSetForegroundWindow(-1)
+            if user32.IsIconic(found_hwnd):
+                user32.ShowWindow(found_hwnd, 9)
+            else:
+                user32.ShowWindow(found_hwnd, 5)
+
+            user32.BringWindowToTop(found_hwnd)
+            user32.keybd_event(0x12, 0, 0, 0)
+            user32.keybd_event(0x12, 0, 2, 0)
             user32.SetForegroundWindow(found_hwnd)
+
+            if fg_thread and fg_thread != cur_thread:
+                user32.AttachThreadInput(cur_thread, fg_thread, False)
+            if target_thread and target_thread != cur_thread:
+                user32.AttachThreadInput(cur_thread, target_thread, False)
             return True
-    except Exception:
-        pass
+    except Exception as e:
+        print("Focus error:", e)
     return False
 
 def auto_detect_buttons():
@@ -54,24 +83,31 @@ def auto_detect_buttons():
         from PIL import ImageGrab
         attach_to_desktop()
         ensure_quotex_focused()
-        time.sleep(0.4)
-        img = ImageGrab.grab()
+        time.sleep(0.35)
+
+        img = ImageGrab.grab(all_screens=True)
         arr = np.array(img)
         h, w, _ = arr.shape
-        right_panel = arr[:, int(w * 0.70):, :]
-        hsv = cv2.cvtColor(right_panel, cv2.COLOR_RGB2HSV)
 
-        g_mask = cv2.inRange(hsv, np.array([35, 100, 100]), np.array([85, 255, 255]))
-        r_mask1 = cv2.inRange(hsv, np.array([0, 100, 100]), np.array([12, 255, 255]))
-        r_mask2 = cv2.inRange(hsv, np.array([165, 100, 100]), np.array([180, 255, 255]))
+        user32 = ctypes.windll.user32
+        v_left = user32.GetSystemMetrics(76)
+        v_top = user32.GetSystemMetrics(77)
+
+        hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
+
+        g_mask = cv2.inRange(hsv, np.array([35, 80, 80]), np.array([85, 255, 255]))
+        r_mask1 = cv2.inRange(hsv, np.array([0, 80, 80]), np.array([12, 255, 255]))
+        r_mask2 = cv2.inRange(hsv, np.array([165, 80, 80]), np.array([180, 255, 255]))
         r_mask = cv2.bitwise_or(r_mask1, r_mask2)
 
         def detect(mask):
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cands = [cv2.boundingRect(c) for c in contours if cv2.boundingRect(c)[2] >= 50 and cv2.boundingRect(c)[3] >= 20]
+            cands = [cv2.boundingRect(c) for c in contours if cv2.boundingRect(c)[2] >= 35 and cv2.boundingRect(c)[3] >= 18]
             if cands:
                 bx, by, bw, bh = sorted(cands, key=lambda b: b[2] * b[3], reverse=True)[0]
-                return int(w * 0.70) + bx + (bw // 2), by + (bh // 2)
+                screen_x = v_left + bx + (bw // 2)
+                screen_y = v_top + by + (bh // 2)
+                return int(screen_x), int(screen_y)
             return None
 
         call_pos = detect(g_mask)

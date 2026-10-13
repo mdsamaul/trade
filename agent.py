@@ -20,6 +20,7 @@ import threading
 from typing import Optional, Dict, Any, List, Tuple
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageEnhance
@@ -194,131 +195,162 @@ class VisionProcessor:
     @classmethod
     def cv_analyze_candlestick_pixels(cls, image: Image.Image) -> Dict[str, Any]:
         """
-        Fast Computer Vision analysis of the candlestick canvas using OpenCV.
-        Detects green (BULLISH) and red (BEARISH) candlestick ratios, wick patterns,
-        and estimates candle momentum.
+        Senior Quantitative Computer Vision Analysis for Quotex Charts:
+          1. Detects and segments all individual candles across the canvas.
+          2. Calculates dynamic Support ($Y_{sup}$) and Resistance ($Y_{res}$) swing levels.
+          3. Evaluates candle body-to-wick proportions, rejection tails, and consecutive streaks.
+          4. Computes true price structure trend and channel positioning.
         """
         np_img = np.array(image)
+        h, w = np_img.shape[0], np_img.shape[1]
         hsv = cv2.cvtColor(np_img, cv2.COLOR_RGB2HSV)
 
         # Quotex Green Candle Mask (Vibrant Emerald / Mint)
-        # Hue ~ 35 to 85
         lower_green = np.array([35, 70, 70])
         upper_green = np.array([85, 255, 255])
         green_mask = cv2.inRange(hsv, lower_green, upper_green)
 
         # Quotex Red Candle Mask (Crimson / Coral Red)
-        # Hue ~ 0-10 and 165-180
         lower_red1 = np.array([0, 70, 70])
         upper_red1 = np.array([12, 255, 255])
         lower_red2 = np.array([165, 70, 70])
         upper_red2 = np.array([180, 255, 255])
-        red_mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-        red_mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-        red_mask = cv2.bitwise_or(red_mask1, red_mask2)
+        red_mask = cv2.bitwise_or(cv2.inRange(hsv, lower_red1, upper_red1), cv2.inRange(hsv, lower_red2, upper_red2))
 
-        # Filter out UI noise: Top banner (deposit bonuses, flags, icons) & Bottom dock (time markers)
-        h, w = np_img.shape[0], np_img.shape[1]
-        top_cut = int(h * 0.16)
-        bottom_cut = int(h * 0.07)
-        left_cut = int(w * 0.05)
-        right_cut = int(w * 0.08)  # price ladder margin
+        # Filter out UI noise: Top banner (deposit buttons, account badges) & Bottom dock
+        top_cut = int(h * 0.12)
+        bottom_cut = int(h * 0.08)
+        left_cut = int(w * 0.04)
+        right_cut = int(w * 0.08)  # right price ladder margin
 
-        green_mask[:top_cut, :] = 0
-        green_mask[-bottom_cut:, :] = 0
-        green_mask[:, :left_cut] = 0
-        green_mask[:, -right_cut:] = 0
+        green_mask[:top_cut, :] = 0; green_mask[-bottom_cut:, :] = 0
+        green_mask[:, :left_cut] = 0; green_mask[:, -right_cut:] = 0
+        red_mask[:top_cut, :] = 0; red_mask[-bottom_cut:, :] = 0
+        red_mask[:, :left_cut] = 0; red_mask[:, -right_cut:] = 0
 
-        red_mask[:top_cut, :] = 0
-        red_mask[-bottom_cut:, :] = 0
-        red_mask[:, :left_cut] = 0
-        red_mask[:, -right_cut:] = 0
+        all_candles_mask = cv2.bitwise_or(green_mask, red_mask)
+        contours, _ = cv2.findContours(all_candles_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        candle_boxes = []
+        for c in contours:
+            bx, by, bw, bh = cv2.boundingRect(c)
+            # Filter realistic candlestick dimensions
+            if bh >= 6 and bw >= 2 and bw <= 45:
+                candle_boxes.append((bx, by, bw, bh))
+
+        # Sort chronologically from left to right
+        candle_boxes = sorted(candle_boxes, key=lambda b: b[0])
+
+        candles_data = []
+        for bx, by, bw, bh in candle_boxes:
+            c_g = np.count_nonzero(green_mask[by:by+bh, bx:bx+bw])
+            c_r = np.count_nonzero(red_mask[by:by+bh, bx:bx+bw])
+            color = "GREEN" if c_g >= c_r else "RED"
+
+            # Profile vertical density to detect body vs wicks
+            vert_profile = np.count_nonzero(all_candles_mask[by:by+bh, bx:bx+bw], axis=1)
+            max_thick = np.max(vert_profile) if len(vert_profile) > 0 else 1
+            body_rows = np.where(vert_profile >= max(2, int(max_thick * 0.60)))[0]
+
+            if len(body_rows) > 0:
+                body_top = by + int(body_rows[0])
+                body_bot = by + int(body_rows[-1])
+            else:
+                body_top = by + int(bh * 0.25)
+                body_bot = by + int(bh * 0.75)
+
+            wick_top = max(0, body_top - by)
+            wick_bot = max(0, (by + bh) - body_bot)
+            body_h = max(1, body_bot - body_top)
+
+            candles_data.append({
+                "x": bx, "y": by, "w": bw, "h": bh,
+                "color": color,
+                "high": by,
+                "low": by + bh,
+                "body_top": body_top,
+                "body_bot": body_bot,
+                "upper_wick_ratio": round(wick_top / bh, 2),
+                "lower_wick_ratio": round(wick_bot / bh, 2),
+                "body_ratio": round(body_h / bh, 2)
+            })
+
+        # Calculate Support & Resistance from the last 15-20 candles
+        if candles_data:
+            lookback = candles_data[-20:]
+            resistance_y = min([c["high"] for c in lookback]) # Lowest Y is highest price
+            support_y = max([c["low"] for c in lookback])      # Highest Y is lowest price
+            channel_h = max(1, support_y - resistance_y)
+
+            active_candle = candles_data[-1]
+            prev_candle = candles_data[-2] if len(candles_data) >= 2 else active_candle
+
+            # Channel position ratio: 0.0 = at Resistance (Peak), 1.0 = at Support (Floor)
+            pos_ratio = (active_candle["low"] - resistance_y) / channel_h
+            pos_ratio = min(1.0, max(0.0, pos_ratio))
+
+            # Trend diagnosis from sequence of candle closes over last 8 candles
+            sample_candles = candles_data[-8:] if len(candles_data) >= 8 else candles_data
+            closes = [c["body_bot"] if c["color"] == "GREEN" else c["body_top"] for c in sample_candles]
+            slope = closes[-1] - closes[0]  # Note: in pixel space, decreasing Y means price is rising
+            if slope < -12:
+                trend = "STRONG_BULLISH"
+            elif slope > 12:
+                trend = "STRONG_BEARISH"
+            elif slope < -5:
+                trend = "MILD_BULLISH"
+            elif slope > 5:
+                trend = "MILD_BEARISH"
+            else:
+                trend = "SIDEWAYS_CONSOLIDATION"
+
+            # Count consecutive same-color candle streaks leading up to active candle
+            green_streak = 0
+            red_streak = 0
+            for c in reversed(candles_data[:-1]):
+                if c["color"] == "GREEN":
+                    if red_streak > 0: break
+                    green_streak += 1
+                else:
+                    if green_streak > 0: break
+                    red_streak += 1
+
+            lower_rejection = active_candle["lower_wick_ratio"] >= 0.30
+            upper_rejection = active_candle["upper_wick_ratio"] >= 0.30
+            active_candle_avg_y = float(active_candle["body_top"] + active_candle["body_bot"]) / 2.0
+            latest_color = active_candle["color"]
+        else:
+            resistance_y = int(h * 0.2)
+            support_y = int(h * 0.8)
+            channel_h = max(1, support_y - resistance_y)
+            pos_ratio = 0.5
+            trend = "SIDEWAYS_CONSOLIDATION"
+            green_streak = 0
+            red_streak = 0
+            lower_rejection = False
+            upper_rejection = False
+            active_candle_avg_y = h / 2.0
+            latest_color = "NEUTRAL"
+            candles_data = []
 
         green_pixels = int(np.count_nonzero(green_mask))
         red_pixels = int(np.count_nonzero(red_mask))
         total_candle_pixels = green_pixels + red_pixels
 
-        if total_candle_pixels > 0:
-            green_ratio = green_pixels / total_candle_pixels
-            red_ratio = red_pixels / total_candle_pixels
-        else:
-            green_ratio = 0.5
-            red_ratio = 0.5
-
-        # Rightmost quadrant (Current active candle area)
-        recent_x_start = int(w * 0.72)
-        recent_x_end = w - right_cut
-        recent_mask_green = green_mask[:, recent_x_start:recent_x_end]
-        recent_mask_red = red_mask[:, recent_x_start:recent_x_end]
-        recent_g_pix = int(np.count_nonzero(recent_mask_green))
-        recent_r_pix = int(np.count_nonzero(recent_mask_red))
-        recent_total = recent_g_pix + recent_r_pix
-
-        if recent_total > 0:
-            recent_bullish_bias = recent_g_pix / recent_total
-        else:
-            recent_bullish_bias = green_ratio
-
-        # Candlestick contour analysis in active trading quadrant
-        recent_all_candle = cv2.bitwise_or(recent_mask_green, recent_mask_red)
-        contours, _ = cv2.findContours(recent_all_candle, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        valid_boxes = []
-        for c in contours:
-            bx, by, bw, bh = cv2.boundingRect(c)
-            if bh >= 4:
-                valid_boxes.append((bx, by, bw, bh))
-
-        valid_boxes = sorted(valid_boxes, key=lambda b: b[0])
-        lower_rejection = False
-        upper_rejection = False
-        active_candle_avg_y = h / 2.0
-        latest_color = "NEUTRAL"
-
-        if valid_boxes:
-            # Active forming candle is the rightmost candle
-            last_bx, last_by, last_bw, last_bh = valid_boxes[-1]
-            active_candle_avg_y = float(last_by + (last_bh / 2.0))
-            last_g = np.count_nonzero(recent_mask_green[last_by:last_by+last_bh, last_bx:last_bx+last_bw])
-            last_r = np.count_nonzero(recent_mask_red[last_by:last_by+last_bh, last_bx:last_bx+last_bw])
-            latest_color = "GREEN" if last_g >= last_r else "RED"
-
-            # Check rejection wicks on the latest candle:
-            # Upper third vs Lower third pixel density of the active candle
-            third_h = max(1, last_bh // 3)
-            top_slice = recent_all_candle[last_by:last_by+third_h, last_bx:last_bx+last_bw]
-            bottom_slice = recent_all_candle[last_by+last_bh-third_h:last_by+last_bh, last_bx:last_bx+last_bw]
-            top_pix = np.count_nonzero(top_slice)
-            bot_pix = np.count_nonzero(bottom_slice)
-
-            # Lower rejection wick: thin bottom tail with concentrated top body
-            if top_pix > (bot_pix * 1.8) and last_bh >= 8:
-                lower_rejection = True
-            # Upper rejection wick: thin top tail with concentrated bottom body
-            elif bot_pix > (top_pix * 1.8) and last_bh >= 8:
-                upper_rejection = True
-
-        # Trend diagnosis across chart canvas
-        if green_ratio > 0.55:
-            trend = "STRONG_BULLISH"
-        elif red_ratio > 0.55:
-            trend = "STRONG_BEARISH"
-        elif green_ratio > 0.51:
-            trend = "MILD_BULLISH"
-        elif red_ratio > 0.51:
-            trend = "MILD_BEARISH"
-        else:
-            trend = "SIDEWAYS_CONSOLIDATION"
-
         return {
-            "green_ratio": round(green_ratio, 3),
-            "red_ratio": round(red_ratio, 3),
-            "recent_bullish_bias": round(recent_bullish_bias, 3),
+            "candles": candles_data,
+            "resistance_y": resistance_y,
+            "support_y": support_y,
+            "channel_height": channel_h,
+            "pos_ratio": round(pos_ratio, 3),
             "trend": trend,
-            "active_candle_avg_y": active_candle_avg_y,
-            "chart_height": h,
+            "green_streak": green_streak,
+            "red_streak": red_streak,
             "lower_rejection": lower_rejection,
             "upper_rejection": upper_rejection,
             "latest_candle_color": latest_color,
+            "active_candle_avg_y": active_candle_avg_y,
+            "chart_height": h,
             "total_detected_candle_pixels": total_candle_pixels
         }
 
@@ -526,80 +558,170 @@ You MUST respond strictly in valid JSON format matching this schema:
         timeframe_seconds: int
     ) -> Dict[str, Any]:
         """
-        Standalone Computer-Vision Heuristic Engine.
-        Analyzes candlestick distribution, recent momentum, and simulates accurate
-        price action analysis when no API key is set.
+        Senior Quantitative Trader Price Action Engine for Quotex Charts.
+        Executes strictly on high-conviction institutional confluence:
+          1. Overbought/Oversold Exhaustion Protection (Never buys the top / sells the bottom)
+          2. A+ Support & Resistance Rejections (Pin-bar hammers / shooting stars)
+          3. Key Level Engulfing Patterns (Demand/Supply shift)
+          4. Trend Pullback Continuations
+          5. Strict Chop & Noise Filters (Skips low-probability consolidation)
         """
         pil_img = VisionProcessor.decode_base64_image(image_b64)
         cv_stats = VisionProcessor.cv_analyze_candlestick_pixels(pil_img)
 
-        bullish_bias = cv_stats["recent_bullish_bias"]
-        overall_green = cv_stats["green_ratio"]
-        overall_red = cv_stats["red_ratio"]
-        trend = cv_stats["trend"]
+        candles = cv_stats.get("candles", [])
+        resistance_y = cv_stats.get("resistance_y", 100)
+        support_y = cv_stats.get("support_y", 300)
+        pos = cv_stats.get("pos_ratio", 0.5)  # 0.0 at Resistance (Peak), 1.0 at Support (Floor)
+        trend = cv_stats.get("trend", "SIDEWAYS_CONSOLIDATION")
+        green_streak = cv_stats.get("green_streak", 0)
+        red_streak = cv_stats.get("red_streak", 0)
 
-        # Derive real dynamic price from active candle vertical position on chart
         chart_h = max(1.0, float(cv_stats.get("chart_height", 360)))
         candle_y = float(cv_stats.get("active_candle_avg_y", chart_h / 2.0))
-        price_ratio = 1.0 - (candle_y / chart_h)  # 0.0 at bottom (lower price), 1.0 at top (higher price)
+        price_ratio = 1.0 - (candle_y / chart_h)
         base_price = round(1.08200 + (price_ratio * 0.00650), 5)
 
-        latest_color = cv_stats.get("latest_candle_color", "NEUTRAL")
-        lower_rejection = cv_stats.get("lower_rejection", False)
-        upper_rejection = cv_stats.get("upper_rejection", False)
+        if not candles:
+            return {
+                "direction": "SKIP",
+                "confidence": 50.0,
+                "current_price": base_price,
+                "trend": trend,
+                "setup_grade": "C",
+                "rejection_wick_found": False,
+                "support_resistance_level": "Awaiting Chart Data",
+                "reasoning": "No clear candlestick pattern detected on chart. Skipping cycle."
+            }
 
-        # Balanced Candlestick & Price-Action Engine (Fair CALL vs PUT evaluation)
-        # 1. Lower Rejection Pin-bar OR Active Bullish Green Expansion -> CALL
-        if lower_rejection or (latest_color == "GREEN" and bullish_bias >= 0.48) or bullish_bias >= 0.54:
-            direction = "CALL"
-            strength = max(bullish_bias - 0.48, 0.15 if lower_rejection else 0.08)
-            raw_confidence = 75.0 + (strength * 48.0) + (5.0 if trend in ["STRONG_BULLISH", "MILD_BULLISH"] else 0.0)
-            grade = "A+" if raw_confidence >= 84.0 else ("A" if raw_confidence >= 78.0 else "B+")
-            rejection_wick = lower_rejection
-            if lower_rejection:
-                reasoning = f"Bullish pin-bar bounce ({bullish_bias:.2f} green bias). Strong rejection at lower support level."
+        active_c = candles[-1]
+        prev_c = candles[-2] if len(candles) >= 2 else active_c
+
+        direction = "SKIP"
+        confidence = 55.0
+        grade = "C"
+        rejection_wick = False
+        level_name = f"Zone (Pos: {pos:.2f})"
+        reasoning = "Consolidation / Indecisive candle structure. Awaiting A+ S&R level confirmation."
+
+        # =========================================================================
+        # SENIOR RULE 1: OVERBOUGHT & OVERSOLD EXHAUSTION PROTECTION (CAPITAL DEFENSE)
+        # =========================================================================
+        # 1A. Market pumped 3+ green candles and is touching Resistance ceiling
+        if green_streak >= 3 and pos <= 0.28:
+            if active_c["upper_wick_ratio"] >= 0.28 or (active_c["color"] == "RED" and active_c["body_ratio"] >= 0.45):
+                direction = "PUT"
+                confidence = 88.0 + (active_c["upper_wick_ratio"] * 10.0)
+                grade = "A+"
+                rejection_wick = True
+                level_name = "Major Resistance Ceiling"
+                reasoning = f"Bearish Exhaustion Reversal at Resistance ({green_streak} green candle rally exhausted, upper wick {active_c['upper_wick_ratio']*100:.0f}%)."
             else:
-                reasoning = f"Bullish momentum expansion ({bullish_bias:.2f} green bias). Active green candle breaking upward."
+                direction = "SKIP"
+                confidence = 52.0
+                grade = "C"
+                rejection_wick = False
+                level_name = "Overbought Ceiling"
+                reasoning = f"Exhaustion Trap avoided: Market already surged {green_streak} green candles into Resistance. Buying CALL here is high-risk."
 
-        # 2. Upper Rejection Shooting Star OR Active Bearish Red Breakdown -> PUT
-        elif upper_rejection or (latest_color == "RED" and bullish_bias <= 0.52) or bullish_bias <= 0.46:
-            direction = "PUT"
-            strength = max(0.52 - bullish_bias, 0.15 if upper_rejection else 0.08)
-            raw_confidence = 75.0 + (strength * 48.0) + (5.0 if trend in ["STRONG_BEARISH", "MILD_BEARISH"] else 0.0)
-            grade = "A+" if raw_confidence >= 84.0 else ("A" if raw_confidence >= 78.0 else "B+")
-            rejection_wick = upper_rejection
-            if upper_rejection:
-                reasoning = f"Bearish shooting-star rejection ({1.0 - bullish_bias:.2f} red bias). Upper ceiling bounce with downward thrust."
+        # 1B. Market plunged 3+ red candles and is touching Support floor
+        elif red_streak >= 3 and pos >= 0.72:
+            if active_c["lower_wick_ratio"] >= 0.28 or (active_c["color"] == "GREEN" and active_c["body_ratio"] >= 0.45):
+                direction = "CALL"
+                confidence = 88.0 + (active_c["lower_wick_ratio"] * 10.0)
+                grade = "A+"
+                rejection_wick = True
+                level_name = "Major Support Floor"
+                reasoning = f"Bullish Exhaustion Reversal at Support ({red_streak} red candle drop exhausted, lower wick {active_c['lower_wick_ratio']*100:.0f}%)."
             else:
-                reasoning = f"Bearish momentum breakdown ({1.0 - bullish_bias:.2f} red bias). Active red candle pushing lower."
+                direction = "SKIP"
+                confidence = 52.0
+                grade = "C"
+                rejection_wick = False
+                level_name = "Oversold Floor"
+                reasoning = f"Exhaustion Trap avoided: Market plunged {red_streak} red candles into Support. Selling PUT here is high-risk."
 
-        # 3. Trend Alignment when candle is balanced
-        elif trend in ["STRONG_BULLISH", "MILD_BULLISH"]:
+        # =========================================================================
+        # SENIOR RULE 2: A+ PIN-BAR & WICK REJECTIONS AT KEY S&R
+        # =========================================================================
+        # 2A. Bullish Pin-bar / Hammer at Support (Floor)
+        elif pos >= 0.62 and active_c["lower_wick_ratio"] >= 0.30:
             direction = "CALL"
-            raw_confidence = 75.0
-            grade = "B+"
-            reasoning = f"Bullish trend continuation (Green ratio {overall_green:.2f}). Following upward market structure."
-            rejection_wick = False
+            confidence = 84.0 + (active_c["lower_wick_ratio"] * 18.0)
+            grade = "A+"
+            rejection_wick = True
+            level_name = "Key Support Demand Zone"
+            reasoning = f"A+ Bullish Pin-bar rejection at Support floor ({active_c['lower_wick_ratio']*100:.0f}% lower wick). Buyers strongly defending level."
 
-        elif trend in ["STRONG_BEARISH", "MILD_BEARISH"]:
+        # 2B. Bearish Shooting Star at Resistance (Ceiling)
+        elif pos <= 0.38 and active_c["upper_wick_ratio"] >= 0.30:
             direction = "PUT"
-            raw_confidence = 75.0
-            grade = "B+"
-            reasoning = f"Bearish trend continuation (Red ratio {overall_red:.2f}). Following downward market structure."
-            rejection_wick = False
+            confidence = 84.0 + (active_c["upper_wick_ratio"] * 18.0)
+            grade = "A+"
+            rejection_wick = True
+            level_name = "Key Resistance Supply Zone"
+            reasoning = f"A+ Bearish Shooting Star rejection at Resistance ceiling ({active_c['upper_wick_ratio']*100:.0f}% upper wick). Sellers rejecting high prices."
 
+        # =========================================================================
+        # SENIOR RULE 3: HIGH-VOLUME ENGULFING PATTERNS AT KEY ZONES
+        # =========================================================================
+        # 3A. Bullish Engulfing at Support
+        elif pos >= 0.58 and prev_c["color"] == "RED" and active_c["color"] == "GREEN" and active_c["body_ratio"] >= 0.50 and active_c["h"] > prev_c["h"]:
+            direction = "CALL"
+            confidence = 84.0
+            grade = "A"
+            rejection_wick = False
+            level_name = "Key Support Floor"
+            reasoning = "Bullish Engulfing reversal formed at Support. Buyers absorbing all previous selling pressure."
+
+        # 3B. Bearish Engulfing at Resistance
+        elif pos <= 0.42 and prev_c["color"] == "GREEN" and active_c["color"] == "RED" and active_c["body_ratio"] >= 0.50 and active_c["h"] > prev_c["h"]:
+            direction = "PUT"
+            confidence = 84.0
+            grade = "A"
+            rejection_wick = False
+            level_name = "Key Resistance Ceiling"
+            reasoning = "Bearish Engulfing reversal formed at Resistance. Sellers overwhelming previous buyers."
+
+        # =========================================================================
+        # SENIOR RULE 4: HEALTHY TREND PULLBACK CONTINUATION
+        # =========================================================================
+        # 4A. Uptrend continuation after small red pullback
+        elif trend in ["STRONG_BULLISH", "MILD_BULLISH"] and pos >= 0.25 and pos <= 0.70:
+            if prev_c["color"] == "RED" and active_c["color"] == "GREEN" and active_c["lower_wick_ratio"] >= 0.18:
+                direction = "CALL"
+                confidence = 82.0
+                grade = "A"
+                rejection_wick = True
+                level_name = "Uptrend Pullback Support"
+                reasoning = "Uptrend continuation: Minor red retracement followed by immediate bullish rejection bounce."
+
+        # 4B. Downtrend continuation after small green pullback
+        elif trend in ["STRONG_BEARISH", "MILD_BEARISH"] and pos >= 0.30 and pos <= 0.75:
+            if prev_c["color"] == "GREEN" and active_c["color"] == "RED" and active_c["upper_wick_ratio"] >= 0.18:
+                direction = "PUT"
+                confidence = 82.0
+                grade = "A"
+                rejection_wick = True
+                level_name = "Downtrend Pullback Resistance"
+                reasoning = "Downtrend continuation: Minor green retracement followed by immediate bearish rejection drop."
+
+        # =========================================================================
+        # SENIOR RULE 5: DEFAULT CHOP & NOISE FILTER (SKIP)
+        # =========================================================================
         else:
             direction = "SKIP"
-            raw_confidence = 54.0 + abs(bullish_bias - 0.5) * 20.0
+            confidence = 58.0
             grade = "C"
-            reasoning = "Indecisive flat consolidation. Awaiting directional break or key level bounce."
             rejection_wick = False
+            level_name = "Consolidation Channel"
+            reasoning = f"No high-conviction S&R confluence (Channel pos: {pos:.2f}, Trend: {trend}). A professional trader waits for prime levels."
 
-        confidence = min(96.0, max(50.0, raw_confidence))
+        confidence = min(96.0, max(50.0, confidence))
 
-        # Enforce strictness tier
+        # Enforce strictness tier threshold
         if direction != "SKIP" and confidence < strictness_cfg.min_confidence:
-            reasoning = f"Setup ({direction} @ {confidence:.1f}%) filtered out by Strictness Level {strictness_cfg.level} ({strictness_cfg.name}). Requires >= {strictness_cfg.min_confidence}% confidence."
+            reasoning = f"Setup ({direction} @ {confidence:.1f}%) filtered out by Strictness Level {strictness_cfg.level} ({strictness_cfg.name}). Demands >= {strictness_cfg.min_confidence}% confidence."
             direction = "SKIP"
 
         return {
@@ -609,7 +731,7 @@ You MUST respond strictly in valid JSON format matching this schema:
             "trend": trend,
             "setup_grade": grade,
             "rejection_wick_found": rejection_wick,
-            "support_resistance_level": f"Key Level ~ {base_price:.5f}",
+            "support_resistance_level": level_name,
             "reasoning": reasoning
         }
 
@@ -917,61 +1039,204 @@ class TradingSessionManager:
 # DIRECT QUOTEX AUTO-CLICKER (REAL TRADE EXECUTION)
 # ==============================================================================
 
+# ==============================================================================
+# DIRECT QUOTEX AUTO-CLICKER (FAIL-PROOF HARDWARE CLICK EXECUTION)
+# ==============================================================================
+
+import ctypes
+from ctypes import wintypes
+
+# Win32 SendInput Structures
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long),
+        ("dy", ctypes.c_long),
+        ("mouseData", ctypes.c_ulong),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+class _INPUT(ctypes.Structure):
+    class _INPUT_UNION(ctypes.Union):
+        _fields_ = [("mi", _MOUSEINPUT)]
+    _anonymous_ = ("_u",)
+    _fields_ = [
+        ("type", ctypes.c_ulong),
+        ("_u", _INPUT_UNION),
+    ]
+
+
 def attach_to_input_desktop() -> bool:
     """
     Ensures the calling thread is attached to the user's interactive Windows desktop (Default).
-    Critical in Windows services or sandbox processes where threads default to an isolated desktop.
+    Critical in Windows services or IDE subprocesses where worker threads default to isolated desktops.
     """
     try:
-        import ctypes
+        user32 = ctypes.windll.user32
         DESKTOP_ALL = 0x01FF
-        hDesk = ctypes.windll.user32.OpenInputDesktop(0, False, DESKTOP_ALL)
+        hDesk = user32.OpenInputDesktop(0, False, DESKTOP_ALL)
         if not hDesk:
-            hDesk = ctypes.windll.user32.OpenDesktopW("Default", 0, False, DESKTOP_ALL)
+            hDesk = user32.OpenDesktopW("Default", 0, False, DESKTOP_ALL)
         if hDesk:
-            res = ctypes.windll.user32.SetThreadDesktop(hDesk)
-            return bool(res)
+            return bool(user32.SetThreadDesktop(hDesk))
     except Exception as e:
         logger.warning(f"Could not attach to input desktop: {e}")
     return False
 
 
-def ensure_quotex_focused() -> bool:
-    """Brings the Quotex browser window to the foreground if minimized or behind."""
+def force_focus_quotex_window(target_x: Optional[int] = None, target_y: Optional[int] = None) -> bool:
+    """
+    Guaranteed method to bring the Quotex browser window to the active foreground.
+    Bypasses Windows UIPI and SetForegroundWindow restrictions using AttachThreadInput + Alt key unlock.
+    """
     try:
-        import ctypes
         attach_to_input_desktop()
         user32 = ctypes.windll.user32
-        found_hwnd = None
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+        kernel32 = ctypes.windll.kernel32
 
-        def enum_cb(hwnd, lp):
-            nonlocal found_hwnd
-            buf = ctypes.create_unicode_buffer(256)
-            if user32.IsWindowVisible(hwnd) and user32.GetWindowTextW(hwnd, buf, 256) > 0:
-                title_lower = buf.value.lower()
-                if "quotex" in title_lower:
-                    found_hwnd = hwnd
-                    return False
+        target_hwnd = None
+
+        # 1. First priority: if target coordinates are given, inspect window under coordinates
+        if target_x is not None and target_y is not None:
+            pt = wintypes.POINT(int(target_x), int(target_y))
+            hw_at_pt = user32.WindowFromPoint(pt)
+            if hw_at_pt:
+                root = user32.GetAncestor(hw_at_pt, 2)  # GA_ROOT
+                if root and user32.IsWindowVisible(root):
+                    target_hwnd = root
+
+        # 2. Second priority: find Quotex trading window (excluding agent dashboard)
+        if not target_hwnd:
+            candidates = []
+            def enum_cb(hwnd, lp):
+                if user32.IsWindowVisible(hwnd):
+                    buf = ctypes.create_unicode_buffer(512)
+                    if user32.GetWindowTextW(hwnd, buf, 512) > 0:
+                        t = buf.value.lower()
+                        # Match Quotex demo or trading, ignore our own agent dashboard title
+                        if "quotex" in t and "autonomous paper-trading" not in t:
+                            candidates.append(hwnd)
+                return True
+
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+            user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+            if candidates:
+                target_hwnd = candidates[0]
+
+        if not target_hwnd:
+            return False
+
+        cur_fg = user32.GetForegroundWindow()
+        if cur_fg == target_hwnd:
             return True
 
-        user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
-        if found_hwnd:
-            user32.ShowWindow(found_hwnd, 9)  # SW_RESTORE
-            user32.ShowWindow(found_hwnd, 3)  # SW_SHOWMAXIMIZED
-            user32.SetForegroundWindow(found_hwnd)
-            return True
+        cur_thread = kernel32.GetCurrentThreadId()
+        fg_thread = user32.GetWindowThreadProcessId(cur_fg, None) if cur_fg else 0
+        target_thread = user32.GetWindowThreadProcessId(target_hwnd, None)
+
+        if fg_thread and fg_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, fg_thread, True)
+        if target_thread and target_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, target_thread, True)
+
+        user32.AllowSetForegroundWindow(-1)
+        if user32.IsIconic(target_hwnd):
+            user32.ShowWindow(target_hwnd, 9)  # SW_RESTORE
+        else:
+            user32.ShowWindow(target_hwnd, 5)  # SW_SHOW
+
+        user32.BringWindowToTop(target_hwnd)
+
+        # Alt key press trick to unlock SetForegroundWindow permission in Windows
+        user32.keybd_event(0x12, 0, 0, 0)
+        user32.keybd_event(0x12, 0, 2, 0)
+        res = user32.SetForegroundWindow(target_hwnd)
+
+        if fg_thread and fg_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, fg_thread, False)
+        if target_thread and target_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, target_thread, False)
+
+        return bool(res)
     except Exception as e:
-        logger.warning(f"Could not focus Quotex window: {e}")
+        logger.warning(f"force_focus_quotex_window warning: {e}")
+        return False
+
+
+def dispatch_hardware_click(target_x: int, target_y: int) -> bool:
+    """
+    Executes exactly ONE single, precise, fail-proof mouse click on target screen coordinates.
+    Brings target window to foreground, simulates realistic mouse hover and 100ms click press.
+    """
+    import time
+    attach_to_input_desktop()
+    user32 = ctypes.windll.user32
+
+    # Step 1: Ensure Quotex / target window is in the foreground
+    force_focus_quotex_window(target_x, target_y)
+    time.sleep(0.04)
+
+    # Step 2: Physical hardware cursor placement
+    user32.SetCursorPos(int(target_x), int(target_y))
+    time.sleep(0.03)
+
+    # Step 3: Win32 Virtual Desktop SendInput (Primary Path - 1 Single Click)
+    v_left = user32.GetSystemMetrics(76)   # SM_XVIRTUALSCREEN
+    v_top = user32.GetSystemMetrics(77)    # SM_YVIRTUALSCREEN
+    v_width = max(1, user32.GetSystemMetrics(78))   # SM_CXVIRTUALSCREEN
+    v_height = max(1, user32.GetSystemMetrics(79))  # SM_CYVIRTUALSCREEN
+
+    norm_x = int((target_x - v_left) * 65535 / v_width)
+    norm_y = int((target_y - v_top) * 65535 / v_height)
+
+    # Send MOUSEEVENTF_MOVE to trigger browser hover / hit-test
+    inp_move = _INPUT(type=0)
+    inp_move.mi.dx = norm_x
+    inp_move.mi.dy = norm_y
+    inp_move.mi.dwFlags = 0x0001 | 0x8000 | 0x4000  # MOVE | ABSOLUTE | VIRTUALDESK
+    user32.SendInput(1, ctypes.byref(inp_move), ctypes.sizeof(_INPUT))
+    time.sleep(0.04)
+
+    # Send MOUSEEVENTF_LEFTDOWN
+    inp_down = _INPUT(type=0)
+    inp_down.mi.dx = norm_x
+    inp_down.mi.dy = norm_y
+    inp_down.mi.dwFlags = 0x0002 | 0x8000 | 0x4000  # LEFTDOWN | ABSOLUTE | VIRTUALDESK
+    sent = user32.SendInput(1, ctypes.byref(inp_down), ctypes.sizeof(_INPUT))
+    time.sleep(0.10)  # Realistic 100ms press duration
+
+    # Send MOUSEEVENTF_LEFTUP
+    inp_up = _INPUT(type=0)
+    inp_up.mi.dx = norm_x
+    inp_up.mi.dy = norm_y
+    inp_up.mi.dwFlags = 0x0004 | 0x8000 | 0x4000  # LEFTUP | ABSOLUTE | VIRTUALDESK
+    user32.SendInput(1, ctypes.byref(inp_up), ctypes.sizeof(_INPUT))
+
+    # If SendInput was successful, exactly ONE single click has completed!
+    if sent > 0:
+        return True
+
+    # Fallback ONLY if SendInput returned 0 (failed to send)
+    try:
+        import pyautogui
+        pyautogui.FAILSAFE = False
+        pyautogui.click(x=int(target_x), y=int(target_y))
+        return True
+    except Exception as py_err:
+        logger.debug(f"PyAutoGUI click fallback error: {py_err}")
+
     return False
 
 
+AUTOCLICK_CONFIG_FILE = Path(__file__).parent / "autoclick_config.json"
+
 class AutoClickerConfig(BaseModel):
     enabled: bool = True
-    call_x: int = 1805
-    call_y: int = 485
-    put_x: int = 1805
-    put_y: int = 538
+    call_x: int = 4482
+    call_y: int = 486
+    put_x: int = 4442
+    put_y: int = 531
     restore_cursor: bool = False
 
 
@@ -980,6 +1245,25 @@ class QuotexAutoClicker:
     def __init__(self):
         self.config = AutoClickerConfig()
         self.lock = threading.Lock()
+        self._last_click_time = 0.0
+        self._load_persisted_config()
+
+    def _load_persisted_config(self):
+        try:
+            if AUTOCLICK_CONFIG_FILE.exists():
+                with open(AUTOCLICK_CONFIG_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.config = AutoClickerConfig(**data)
+                    logger.info(f"Loaded persistent AutoClicker config: {self.config}")
+        except Exception as e:
+            logger.warning(f"Could not load autoclick config file: {e}")
+
+    def _save_persisted_config(self):
+        try:
+            with open(AUTOCLICK_CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.config.dict(), f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not save autoclick config file: {e}")
 
     def update_config(self, enabled=None, call_x=None, call_y=None, put_x=None, put_y=None, restore_cursor=None):
         with self.lock:
@@ -989,37 +1273,48 @@ class QuotexAutoClicker:
             if put_x is not None: self.config.put_x = int(put_x)
             if put_y is not None: self.config.put_y = int(put_y)
             if restore_cursor is not None: self.config.restore_cursor = bool(restore_cursor)
+            self._save_persisted_config()
 
     def auto_detect_quotex_buttons(self) -> Dict[str, Any]:
         """
-        Scans screen with Computer Vision to find exact centers of Green Buy and Red Sell buttons.
-        Automatically brings Quotex to the front if minimized.
+        Scans all connected screens with Computer Vision to find exact centers of Quotex
+        Green Buy (CALL) and Red Sell (PUT) buttons. Handles multi-monitor offsets.
         """
         try:
-            import ctypes, cv2, numpy as np, time
+            import cv2
+            import numpy as np
+            import time
             from PIL import ImageGrab
 
             attach_to_input_desktop()
-            ensure_quotex_focused()
-            time.sleep(0.40)
+            force_focus_quotex_window()
+            time.sleep(0.35)
 
-            img = ImageGrab.grab()
+            # Grab across all monitors
+            img = ImageGrab.grab(all_screens=True)
             arr = np.array(img)
             h, w, _ = arr.shape
-            right_panel = arr[:, int(w * 0.70):, :]
-            hsv = cv2.cvtColor(right_panel, cv2.COLOR_RGB2HSV)
 
-            g_mask = cv2.inRange(hsv, np.array([35, 100, 100]), np.array([85, 255, 255]))
-            r_mask1 = cv2.inRange(hsv, np.array([0, 100, 100]), np.array([12, 255, 255]))
-            r_mask2 = cv2.inRange(hsv, np.array([165, 100, 100]), np.array([180, 255, 255]))
+            user32 = ctypes.windll.user32
+            v_left = user32.GetSystemMetrics(76)
+            v_top = user32.GetSystemMetrics(77)
+
+            hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
+
+            g_mask = cv2.inRange(hsv, np.array([35, 80, 80]), np.array([85, 255, 255]))
+            r_mask1 = cv2.inRange(hsv, np.array([0, 80, 80]), np.array([12, 255, 255]))
+            r_mask2 = cv2.inRange(hsv, np.array([165, 80, 80]), np.array([180, 255, 255]))
             r_mask = cv2.bitwise_or(r_mask1, r_mask2)
 
             def detect(mask):
                 contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                cands = [cv2.boundingRect(c) for c in contours if cv2.boundingRect(c)[2] >= 50 and cv2.boundingRect(c)[3] >= 20]
+                cands = [cv2.boundingRect(c) for c in contours if cv2.boundingRect(c)[2] >= 35 and cv2.boundingRect(c)[3] >= 18]
                 if cands:
                     bx, by, bw, bh = sorted(cands, key=lambda b: b[2] * b[3], reverse=True)[0]
-                    return int(w * 0.70) + bx + (bw // 2), by + (bh // 2)
+                    # Map from ImageGrab coords (relative to v_left, v_top) to absolute screen coords:
+                    screen_x = v_left + bx + (bw // 2)
+                    screen_y = v_top + by + (bh // 2)
+                    return int(screen_x), int(screen_y)
                 return None
 
             call_pos = detect(g_mask)
@@ -1045,47 +1340,35 @@ class QuotexAutoClicker:
         with self.lock:
             if not self.config.enabled:
                 return False
+
+            # Debounce protection: enforce minimum 2.0s between trades
+            now = time.time()
+            if now - self._last_click_time < 2.0:
+                logger.info(f"Click debounced ({now - self._last_click_time:.2f}s since last click). Skipping duplicate.")
+                return False
+            self._last_click_time = now
+
             target_x = self.config.call_x if direction == "CALL" else self.config.put_x
             target_y = self.config.call_y if direction == "CALL" else self.config.put_y
             restore = self.config.restore_cursor
 
         def _click_worker():
             try:
-                import ctypes
-                from ctypes import wintypes
                 import time
-
-                # Attach this worker thread directly to the interactive desktop and focus Quotex
                 attach_to_input_desktop()
-                ensure_quotex_focused()
-                time.sleep(0.06)
-
+                user32 = ctypes.windll.user32
                 orig_pt = wintypes.POINT()
-                has_orig = bool(ctypes.windll.user32.GetCursorPos(ctypes.byref(orig_pt)))
+                has_orig = bool(user32.GetCursorPos(ctypes.byref(orig_pt)))
 
-                # Hardware-level Win32 Mouse Event
-                ctypes.windll.user32.SetCursorPos(int(target_x), int(target_y))
-                time.sleep(0.04)
-
-                # Left Mouse Down (0x0002)
-                ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
-                time.sleep(0.12)  # Realistic 120ms human press duration for web buttons
-                # Left Mouse Up (0x0004)
-                ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
-                logger.info(f"⚡ [DIRECT QUOTEX HARDWARE CLICK] Successfully clicked {direction} at ({target_x}, {target_y})!")
+                dispatch_hardware_click(target_x, target_y)
+                logger.info(f"⚡ [AUTO-CLICK EXECUTED - 1 CLICK] Successfully clicked {direction} at ({target_x}, {target_y})!")
 
                 if restore and has_orig:
-                    time.sleep(0.08)
-                    ctypes.windll.user32.SetCursorPos(orig_pt.x, orig_pt.y)
+                    time.sleep(0.12)
+                    user32.SetCursorPos(orig_pt.x, orig_pt.y)
 
             except Exception as e:
-                logger.error(f"Hardware click error: {e}")
-                try:
-                    import pyautogui
-                    pyautogui.FAILSAFE = False
-                    pyautogui.click(x=target_x, y=target_y)
-                except Exception as py_err:
-                    logger.error(f"PyAutoGUI click error: {py_err}")
+                logger.error(f"Click worker error: {e}")
 
         threading.Thread(target=_click_worker, daemon=True).start()
         return True
@@ -1096,18 +1379,8 @@ class QuotexAutoClicker:
             target_y = self.config.call_y if direction == "CALL" else self.config.put_y
 
         try:
-            import ctypes
-            import time
-
-            attach_to_input_desktop()
-            ensure_quotex_focused()
-            time.sleep(0.08)
-            ctypes.windll.user32.SetCursorPos(int(target_x), int(target_y))
-            time.sleep(0.05)
-            ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
-            time.sleep(0.12)
-            ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
-            logger.info(f"⚡ [TEST CLICK] Successfully clicked {direction} at ({target_x}, {target_y})")
+            dispatch_hardware_click(target_x, target_y)
+            logger.info(f"⚡ [TEST CLICK EXECUTED - 1 CLICK] Successfully clicked {direction} at ({target_x}, {target_y})")
             return {"success": True, "clicked_at": {"x": target_x, "y": target_y}, "direction": direction}
         except Exception as e:
             logger.error(f"Test click error: {e}")
@@ -1115,8 +1388,6 @@ class QuotexAutoClicker:
 
     def get_mouse_position(self) -> Dict[str, int]:
         try:
-            import ctypes
-            from ctypes import wintypes
             attach_to_input_desktop()
             pt = wintypes.POINT()
             if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
