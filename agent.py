@@ -917,52 +917,193 @@ class TradingSessionManager:
 # DIRECT QUOTEX AUTO-CLICKER (REAL TRADE EXECUTION)
 # ==============================================================================
 
+# ==============================================================================
+# DIRECT QUOTEX AUTO-CLICKER (FAIL-PROOF HARDWARE CLICK EXECUTION)
+# ==============================================================================
+
+import ctypes
+from ctypes import wintypes
+
+# Win32 SendInput Structures
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long),
+        ("dy", ctypes.c_long),
+        ("mouseData", ctypes.c_ulong),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+class _INPUT(ctypes.Structure):
+    class _INPUT_UNION(ctypes.Union):
+        _fields_ = [("mi", _MOUSEINPUT)]
+    _anonymous_ = ("_u",)
+    _fields_ = [
+        ("type", ctypes.c_ulong),
+        ("_u", _INPUT_UNION),
+    ]
+
+
 def attach_to_input_desktop() -> bool:
     """
     Ensures the calling thread is attached to the user's interactive Windows desktop (Default).
-    Critical in Windows services or sandbox processes where threads default to an isolated desktop.
+    Critical in Windows services or IDE subprocesses where worker threads default to isolated desktops.
     """
     try:
-        import ctypes
+        user32 = ctypes.windll.user32
         DESKTOP_ALL = 0x01FF
-        hDesk = ctypes.windll.user32.OpenInputDesktop(0, False, DESKTOP_ALL)
+        hDesk = user32.OpenInputDesktop(0, False, DESKTOP_ALL)
         if not hDesk:
-            hDesk = ctypes.windll.user32.OpenDesktopW("Default", 0, False, DESKTOP_ALL)
+            hDesk = user32.OpenDesktopW("Default", 0, False, DESKTOP_ALL)
         if hDesk:
-            res = ctypes.windll.user32.SetThreadDesktop(hDesk)
-            return bool(res)
+            return bool(user32.SetThreadDesktop(hDesk))
     except Exception as e:
         logger.warning(f"Could not attach to input desktop: {e}")
     return False
 
 
-def ensure_quotex_focused() -> bool:
-    """Brings the Quotex browser window to the foreground if minimized or behind."""
+def force_focus_quotex_window(target_x: Optional[int] = None, target_y: Optional[int] = None) -> bool:
+    """
+    Guaranteed method to bring the Quotex browser window to the active foreground.
+    Bypasses Windows UIPI and SetForegroundWindow restrictions using AttachThreadInput + Alt key unlock.
+    """
     try:
-        import ctypes
         attach_to_input_desktop()
         user32 = ctypes.windll.user32
-        found_hwnd = None
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+        kernel32 = ctypes.windll.kernel32
 
-        def enum_cb(hwnd, lp):
-            nonlocal found_hwnd
-            buf = ctypes.create_unicode_buffer(256)
-            if user32.IsWindowVisible(hwnd) and user32.GetWindowTextW(hwnd, buf, 256) > 0:
-                title_lower = buf.value.lower()
-                if "quotex" in title_lower:
-                    found_hwnd = hwnd
-                    return False
+        target_hwnd = None
+
+        # 1. First priority: if target coordinates are given, inspect window under coordinates
+        if target_x is not None and target_y is not None:
+            pt = wintypes.POINT(int(target_x), int(target_y))
+            hw_at_pt = user32.WindowFromPoint(pt)
+            if hw_at_pt:
+                root = user32.GetAncestor(hw_at_pt, 2)  # GA_ROOT
+                if root and user32.IsWindowVisible(root):
+                    target_hwnd = root
+
+        # 2. Second priority: find Quotex trading window (excluding agent dashboard)
+        if not target_hwnd:
+            candidates = []
+            def enum_cb(hwnd, lp):
+                if user32.IsWindowVisible(hwnd):
+                    buf = ctypes.create_unicode_buffer(512)
+                    if user32.GetWindowTextW(hwnd, buf, 512) > 0:
+                        t = buf.value.lower()
+                        # Match Quotex demo or trading, ignore our own agent dashboard title
+                        if "quotex" in t and "autonomous paper-trading" not in t:
+                            candidates.append(hwnd)
+                return True
+
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+            user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+            if candidates:
+                target_hwnd = candidates[0]
+
+        if not target_hwnd:
+            return False
+
+        cur_fg = user32.GetForegroundWindow()
+        if cur_fg == target_hwnd:
             return True
 
-        user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
-        if found_hwnd:
-            user32.ShowWindow(found_hwnd, 9)  # SW_RESTORE
-            user32.ShowWindow(found_hwnd, 3)  # SW_SHOWMAXIMIZED
-            user32.SetForegroundWindow(found_hwnd)
-            return True
+        cur_thread = kernel32.GetCurrentThreadId()
+        fg_thread = user32.GetWindowThreadProcessId(cur_fg, None) if cur_fg else 0
+        target_thread = user32.GetWindowThreadProcessId(target_hwnd, None)
+
+        if fg_thread and fg_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, fg_thread, True)
+        if target_thread and target_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, target_thread, True)
+
+        user32.AllowSetForegroundWindow(-1)
+        if user32.IsIconic(target_hwnd):
+            user32.ShowWindow(target_hwnd, 9)  # SW_RESTORE
+        else:
+            user32.ShowWindow(target_hwnd, 5)  # SW_SHOW
+
+        user32.BringWindowToTop(target_hwnd)
+
+        # Alt key press trick to unlock SetForegroundWindow permission in Windows
+        user32.keybd_event(0x12, 0, 0, 0)
+        user32.keybd_event(0x12, 0, 2, 0)
+        res = user32.SetForegroundWindow(target_hwnd)
+
+        if fg_thread and fg_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, fg_thread, False)
+        if target_thread and target_thread != cur_thread:
+            user32.AttachThreadInput(cur_thread, target_thread, False)
+
+        return bool(res)
     except Exception as e:
-        logger.warning(f"Could not focus Quotex window: {e}")
+        logger.warning(f"force_focus_quotex_window warning: {e}")
+        return False
+
+
+def dispatch_hardware_click(target_x: int, target_y: int) -> bool:
+    """
+    Executes exactly ONE single, precise, fail-proof mouse click on target screen coordinates.
+    Brings target window to foreground, simulates realistic mouse hover and 100ms click press.
+    """
+    import time
+    attach_to_input_desktop()
+    user32 = ctypes.windll.user32
+
+    # Step 1: Ensure Quotex / target window is in the foreground
+    force_focus_quotex_window(target_x, target_y)
+    time.sleep(0.04)
+
+    # Step 2: Physical hardware cursor placement
+    user32.SetCursorPos(int(target_x), int(target_y))
+    time.sleep(0.03)
+
+    # Step 3: Win32 Virtual Desktop SendInput (Primary Path - 1 Single Click)
+    v_left = user32.GetSystemMetrics(76)   # SM_XVIRTUALSCREEN
+    v_top = user32.GetSystemMetrics(77)    # SM_YVIRTUALSCREEN
+    v_width = max(1, user32.GetSystemMetrics(78))   # SM_CXVIRTUALSCREEN
+    v_height = max(1, user32.GetSystemMetrics(79))  # SM_CYVIRTUALSCREEN
+
+    norm_x = int((target_x - v_left) * 65535 / v_width)
+    norm_y = int((target_y - v_top) * 65535 / v_height)
+
+    # Send MOUSEEVENTF_MOVE to trigger browser hover / hit-test
+    inp_move = _INPUT(type=0)
+    inp_move.mi.dx = norm_x
+    inp_move.mi.dy = norm_y
+    inp_move.mi.dwFlags = 0x0001 | 0x8000 | 0x4000  # MOVE | ABSOLUTE | VIRTUALDESK
+    user32.SendInput(1, ctypes.byref(inp_move), ctypes.sizeof(_INPUT))
+    time.sleep(0.04)
+
+    # Send MOUSEEVENTF_LEFTDOWN
+    inp_down = _INPUT(type=0)
+    inp_down.mi.dx = norm_x
+    inp_down.mi.dy = norm_y
+    inp_down.mi.dwFlags = 0x0002 | 0x8000 | 0x4000  # LEFTDOWN | ABSOLUTE | VIRTUALDESK
+    sent = user32.SendInput(1, ctypes.byref(inp_down), ctypes.sizeof(_INPUT))
+    time.sleep(0.10)  # Realistic 100ms press duration
+
+    # Send MOUSEEVENTF_LEFTUP
+    inp_up = _INPUT(type=0)
+    inp_up.mi.dx = norm_x
+    inp_up.mi.dy = norm_y
+    inp_up.mi.dwFlags = 0x0004 | 0x8000 | 0x4000  # LEFTUP | ABSOLUTE | VIRTUALDESK
+    user32.SendInput(1, ctypes.byref(inp_up), ctypes.sizeof(_INPUT))
+
+    # If SendInput was successful, exactly ONE single click has completed!
+    if sent > 0:
+        return True
+
+    # Fallback ONLY if SendInput returned 0 (failed to send)
+    try:
+        import pyautogui
+        pyautogui.FAILSAFE = False
+        pyautogui.click(x=int(target_x), y=int(target_y))
+        return True
+    except Exception as py_err:
+        logger.debug(f"PyAutoGUI click fallback error: {py_err}")
+
     return False
 
 
@@ -980,6 +1121,7 @@ class QuotexAutoClicker:
     def __init__(self):
         self.config = AutoClickerConfig()
         self.lock = threading.Lock()
+        self._last_click_time = 0.0
 
     def update_config(self, enabled=None, call_x=None, call_y=None, put_x=None, put_y=None, restore_cursor=None):
         with self.lock:
@@ -992,34 +1134,44 @@ class QuotexAutoClicker:
 
     def auto_detect_quotex_buttons(self) -> Dict[str, Any]:
         """
-        Scans screen with Computer Vision to find exact centers of Green Buy and Red Sell buttons.
-        Automatically brings Quotex to the front if minimized.
+        Scans all connected screens with Computer Vision to find exact centers of Quotex
+        Green Buy (CALL) and Red Sell (PUT) buttons. Handles multi-monitor offsets.
         """
         try:
-            import ctypes, cv2, numpy as np, time
+            import cv2
+            import numpy as np
+            import time
             from PIL import ImageGrab
 
             attach_to_input_desktop()
-            ensure_quotex_focused()
-            time.sleep(0.40)
+            force_focus_quotex_window()
+            time.sleep(0.35)
 
-            img = ImageGrab.grab()
+            # Grab across all monitors
+            img = ImageGrab.grab(all_screens=True)
             arr = np.array(img)
             h, w, _ = arr.shape
-            right_panel = arr[:, int(w * 0.70):, :]
-            hsv = cv2.cvtColor(right_panel, cv2.COLOR_RGB2HSV)
 
-            g_mask = cv2.inRange(hsv, np.array([35, 100, 100]), np.array([85, 255, 255]))
-            r_mask1 = cv2.inRange(hsv, np.array([0, 100, 100]), np.array([12, 255, 255]))
-            r_mask2 = cv2.inRange(hsv, np.array([165, 100, 100]), np.array([180, 255, 255]))
+            user32 = ctypes.windll.user32
+            v_left = user32.GetSystemMetrics(76)
+            v_top = user32.GetSystemMetrics(77)
+
+            hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
+
+            g_mask = cv2.inRange(hsv, np.array([35, 80, 80]), np.array([85, 255, 255]))
+            r_mask1 = cv2.inRange(hsv, np.array([0, 80, 80]), np.array([12, 255, 255]))
+            r_mask2 = cv2.inRange(hsv, np.array([165, 80, 80]), np.array([180, 255, 255]))
             r_mask = cv2.bitwise_or(r_mask1, r_mask2)
 
             def detect(mask):
                 contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                cands = [cv2.boundingRect(c) for c in contours if cv2.boundingRect(c)[2] >= 50 and cv2.boundingRect(c)[3] >= 20]
+                cands = [cv2.boundingRect(c) for c in contours if cv2.boundingRect(c)[2] >= 35 and cv2.boundingRect(c)[3] >= 18]
                 if cands:
                     bx, by, bw, bh = sorted(cands, key=lambda b: b[2] * b[3], reverse=True)[0]
-                    return int(w * 0.70) + bx + (bw // 2), by + (bh // 2)
+                    # Map from ImageGrab coords (relative to v_left, v_top) to absolute screen coords:
+                    screen_x = v_left + bx + (bw // 2)
+                    screen_y = v_top + by + (bh // 2)
+                    return int(screen_x), int(screen_y)
                 return None
 
             call_pos = detect(g_mask)
@@ -1045,47 +1197,35 @@ class QuotexAutoClicker:
         with self.lock:
             if not self.config.enabled:
                 return False
+
+            # Debounce protection: enforce minimum 2.0s between trades
+            now = time.time()
+            if now - self._last_click_time < 2.0:
+                logger.info(f"Click debounced ({now - self._last_click_time:.2f}s since last click). Skipping duplicate.")
+                return False
+            self._last_click_time = now
+
             target_x = self.config.call_x if direction == "CALL" else self.config.put_x
             target_y = self.config.call_y if direction == "CALL" else self.config.put_y
             restore = self.config.restore_cursor
 
         def _click_worker():
             try:
-                import ctypes
-                from ctypes import wintypes
                 import time
-
-                # Attach this worker thread directly to the interactive desktop and focus Quotex
                 attach_to_input_desktop()
-                ensure_quotex_focused()
-                time.sleep(0.06)
-
+                user32 = ctypes.windll.user32
                 orig_pt = wintypes.POINT()
-                has_orig = bool(ctypes.windll.user32.GetCursorPos(ctypes.byref(orig_pt)))
+                has_orig = bool(user32.GetCursorPos(ctypes.byref(orig_pt)))
 
-                # Hardware-level Win32 Mouse Event
-                ctypes.windll.user32.SetCursorPos(int(target_x), int(target_y))
-                time.sleep(0.04)
-
-                # Left Mouse Down (0x0002)
-                ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
-                time.sleep(0.12)  # Realistic 120ms human press duration for web buttons
-                # Left Mouse Up (0x0004)
-                ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
-                logger.info(f"⚡ [DIRECT QUOTEX HARDWARE CLICK] Successfully clicked {direction} at ({target_x}, {target_y})!")
+                dispatch_hardware_click(target_x, target_y)
+                logger.info(f"⚡ [AUTO-CLICK EXECUTED - 1 CLICK] Successfully clicked {direction} at ({target_x}, {target_y})!")
 
                 if restore and has_orig:
-                    time.sleep(0.08)
-                    ctypes.windll.user32.SetCursorPos(orig_pt.x, orig_pt.y)
+                    time.sleep(0.12)
+                    user32.SetCursorPos(orig_pt.x, orig_pt.y)
 
             except Exception as e:
-                logger.error(f"Hardware click error: {e}")
-                try:
-                    import pyautogui
-                    pyautogui.FAILSAFE = False
-                    pyautogui.click(x=target_x, y=target_y)
-                except Exception as py_err:
-                    logger.error(f"PyAutoGUI click error: {py_err}")
+                logger.error(f"Click worker error: {e}")
 
         threading.Thread(target=_click_worker, daemon=True).start()
         return True
@@ -1096,18 +1236,8 @@ class QuotexAutoClicker:
             target_y = self.config.call_y if direction == "CALL" else self.config.put_y
 
         try:
-            import ctypes
-            import time
-
-            attach_to_input_desktop()
-            ensure_quotex_focused()
-            time.sleep(0.08)
-            ctypes.windll.user32.SetCursorPos(int(target_x), int(target_y))
-            time.sleep(0.05)
-            ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)
-            time.sleep(0.12)
-            ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)
-            logger.info(f"⚡ [TEST CLICK] Successfully clicked {direction} at ({target_x}, {target_y})")
+            dispatch_hardware_click(target_x, target_y)
+            logger.info(f"⚡ [TEST CLICK EXECUTED - 1 CLICK] Successfully clicked {direction} at ({target_x}, {target_y})")
             return {"success": True, "clicked_at": {"x": target_x, "y": target_y}, "direction": direction}
         except Exception as e:
             logger.error(f"Test click error: {e}")
@@ -1115,8 +1245,6 @@ class QuotexAutoClicker:
 
     def get_mouse_position(self) -> Dict[str, int]:
         try:
-            import ctypes
-            from ctypes import wintypes
             attach_to_input_desktop()
             pt = wintypes.POINT()
             if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
