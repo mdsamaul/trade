@@ -280,6 +280,10 @@ async def auto_cycle(payload: AutoCycleRequest):
         )
 
         direction = decision["direction"]
+        logger.info(
+            f"Frame Analyzed -> Signal: {direction} | Conf: {decision['confidence']}% | "
+            f"Trend: {decision['trend']} | Grade: {decision['setup_grade']} | Rationale: {decision['reasoning']}"
+        )
         opened_trade = None
 
         if direction in ["CALL", "PUT"]:

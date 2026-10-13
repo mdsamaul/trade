@@ -1612,8 +1612,19 @@
 
       let b64 = captureCurrentFrameBase64();
       if (!b64) {
-        // If screen not shared yet, provide simulated mock frame for demonstration
-        b64 = generateMockChartCanvasBase64();
+        aiDecisionBadge.textContent = 'NO SCREEN';
+        aiDecisionBadge.className = 'decision-badge font-brand badge-skip';
+        aiPriceEstimate.textContent = 'Screen Not Connected';
+        aiConfidenceVal.textContent = '0.0%';
+        aiGradeVal.textContent = 'GRADE: --';
+        traitTrend.textContent = 'DISCONNECTED';
+        traitWick.textContent = 'NO';
+        traitLevel.textContent = 'Share Quotex Tab';
+        traitFilter.textContent = 'NO STREAM';
+        traitFilter.style.color = 'var(--neon-gold)';
+        aiRationaleText.textContent = '⚠️ Quotex স্ক্রিন শেয়ার কানেক্ট করা নেই! উপরে "📡 Share Quotex Tab" বাটনে ক্লিক করে আপনার Quotex ব্রাউজার উইন্ডো/ট্যাবটি সিলেক্ট করুন। চার্ট শেয়ার করলে তবেই AI ক্যান্ডেলস্টিক স্ক্যান ও অটো-ট্রেড করবে।';
+        isCycleBusy = false;
+        return;
       }
 
       try {
@@ -1785,6 +1796,10 @@
 
     toggleAutoBtn.addEventListener('click', () => {
       sound.init();
+      if (!screenStream && !autoTradingActive) {
+        alert("⚠️ Quotex স্ক্রিন শেয়ার কানেক্ট করা নেই!\n\nদয়া করে উপরে '📡 Share Quotex Tab' বাটনে চাপ দিয়ে আপনার Quotex ট্রেডিং চার্টটি সিলেক্ট করুন। তারপর 'Start Autonomous Agent' চালু করুন।");
+        return;
+      }
       if (!autoTradingActive) {
         startAutonomousLoop();
       } else {
@@ -1794,6 +1809,9 @@
 
     triggerScanBtn.addEventListener('click', () => {
       sound.init();
+      if (!screenStream) {
+        alert("⚠️ Quotex স্ক্রিন শেয়ার কানেক্ট করা নেই!\n\nদয়া করে প্রথমে উপরে '📡 Share Quotex Tab' বাটনে চাপ দিয়ে আপনার Quotex ট্রেডিং ট্যাবটি শেয়ার করুন।");
+      }
       executeCycle();
     });
 
