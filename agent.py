@@ -1232,7 +1232,7 @@ def dispatch_hardware_click(target_x: int, target_y: int) -> bool:
 AUTOCLICK_CONFIG_FILE = Path(__file__).parent / "autoclick_config.json"
 
 class AutoClickerConfig(BaseModel):
-    enabled: bool = True
+    enabled: bool = False
     call_x: int = 4482
     call_y: int = 486
     put_x: int = 4442
