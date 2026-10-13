@@ -95,9 +95,9 @@ def auto_detect_buttons():
 
         hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
 
-        g_mask = cv2.inRange(hsv, np.array([35, 80, 80]), np.array([85, 255, 255]))
-        r_mask1 = cv2.inRange(hsv, np.array([0, 80, 80]), np.array([12, 255, 255]))
-        r_mask2 = cv2.inRange(hsv, np.array([165, 80, 80]), np.array([180, 255, 255]))
+        g_mask = cv2.inRange(hsv, np.array([35, 60, 60]), np.array([98, 255, 255]))
+        r_mask1 = cv2.inRange(hsv, np.array([0, 60, 60]), np.array([14, 255, 255]))
+        r_mask2 = cv2.inRange(hsv, np.array([160, 60, 60]), np.array([180, 255, 255]))
         r_mask = cv2.bitwise_or(r_mask1, r_mask2)
 
         def detect(mask):

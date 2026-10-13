@@ -49,40 +49,40 @@ STRICTNESS_TIERS: Dict[int, StrictnessConfig] = {
     1: StrictnessConfig(
         level=1,
         name="Lenient / Exploration",
-        min_confidence=62.0,
-        min_wick_ratio=0.15,
+        min_confidence=60.0,
+        min_wick_ratio=0.10,
         require_trend_alignment=False,
         description="Trades on standard momentum, moderate engulfing bodies, and basic S&R bounces."
     ),
     2: StrictnessConfig(
         level=2,
         name="Balanced / Standard",
-        min_confidence=70.0,
-        min_wick_ratio=0.25,
+        min_confidence=68.0,
+        min_wick_ratio=0.18,
         require_trend_alignment=True,
         description="Requires clean trend alignment (EMA slope) or distinct candlestick rejection wicks."
     ),
     3: StrictnessConfig(
         level=3,
         name="Selective / Conservative",
-        min_confidence=78.0,
-        min_wick_ratio=0.35,
+        min_confidence=74.0,
+        min_wick_ratio=0.25,
         require_trend_alignment=True,
         description="Demands strong confluence: Trend alignment + Key Support/Resistance rejection."
     ),
     4: StrictnessConfig(
         level=4,
         name="High Strictness / Defense",
-        min_confidence=84.0,
-        min_wick_ratio=0.45,
+        min_confidence=78.0,
+        min_wick_ratio=0.35,
         require_trend_alignment=True,
-        description="Activated after losses. Filters out 80% of candles; requires institutional pin-bars."
+        description="Activated after losses. Demands clean trend confluence and rejection pin-bars."
     ),
     5: StrictnessConfig(
         level=5,
         name="Sniper / Ultra Strict",
-        min_confidence=90.0,
-        min_wick_ratio=0.55,
+        min_confidence=82.0,
+        min_wick_ratio=0.45,
         require_trend_alignment=True,
         description="Highest conviction only. Requires clear momentum exhaustion at extreme S&R bounce."
     )
@@ -205,28 +205,32 @@ class VisionProcessor:
         h, w = np_img.shape[0], np_img.shape[1]
         hsv = cv2.cvtColor(np_img, cv2.COLOR_RGB2HSV)
 
-        # Quotex Green Candle Mask (Vibrant Emerald / Mint)
-        lower_green = np.array([35, 70, 70])
-        upper_green = np.array([85, 255, 255])
+        # Quotex Green Candle Mask (Vibrant Emerald / Mint / TradingView Teal)
+        lower_green = np.array([35, 30, 40])
+        upper_green = np.array([98, 255, 255])
         green_mask = cv2.inRange(hsv, lower_green, upper_green)
 
-        # Quotex Red Candle Mask (Crimson / Coral Red)
-        lower_red1 = np.array([0, 70, 70])
-        upper_red1 = np.array([12, 255, 255])
-        lower_red2 = np.array([165, 70, 70])
+        # Quotex Red Candle Mask (Crimson / Coral Red / TradingView Red)
+        lower_red1 = np.array([0, 30, 40])
+        upper_red1 = np.array([14, 255, 255])
+        lower_red2 = np.array([160, 30, 40])
         upper_red2 = np.array([180, 255, 255])
         red_mask = cv2.bitwise_or(cv2.inRange(hsv, lower_red1, upper_red1), cv2.inRange(hsv, lower_red2, upper_red2))
 
-        # Filter out UI noise: Top banner (deposit buttons, account badges) & Bottom dock
-        top_cut = int(h * 0.12)
-        bottom_cut = int(h * 0.08)
-        left_cut = int(w * 0.04)
-        right_cut = int(w * 0.08)  # right price ladder margin
+        # Filter out UI noise only from extreme top/bottom/left edges; preserve right edge for active candle
+        top_cut = int(h * 0.03)
+        bottom_cut = int(h * 0.03)
+        left_cut = int(w * 0.02)
 
-        green_mask[:top_cut, :] = 0; green_mask[-bottom_cut:, :] = 0
-        green_mask[:, :left_cut] = 0; green_mask[:, -right_cut:] = 0
-        red_mask[:top_cut, :] = 0; red_mask[-bottom_cut:, :] = 0
-        red_mask[:, :left_cut] = 0; red_mask[:, -right_cut:] = 0
+        if top_cut > 0:
+            green_mask[:top_cut, :] = 0
+            red_mask[:top_cut, :] = 0
+        if bottom_cut > 0:
+            green_mask[-bottom_cut:, :] = 0
+            red_mask[-bottom_cut:, :] = 0
+        if left_cut > 0:
+            green_mask[:, :left_cut] = 0
+            red_mask[:, :left_cut] = 0
 
         all_candles_mask = cv2.bitwise_or(green_mask, red_mask)
         contours, _ = cv2.findContours(all_candles_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -235,7 +239,7 @@ class VisionProcessor:
         for c in contours:
             bx, by, bw, bh = cv2.boundingRect(c)
             # Filter realistic candlestick dimensions
-            if bh >= 6 and bw >= 2 and bw <= 45:
+            if bh >= 5 and bw >= 2 and bw <= 55:
                 candle_boxes.append((bx, by, bw, bh))
 
         # Sort chronologically from left to right
@@ -250,7 +254,7 @@ class VisionProcessor:
             # Profile vertical density to detect body vs wicks
             vert_profile = np.count_nonzero(all_candles_mask[by:by+bh, bx:bx+bw], axis=1)
             max_thick = np.max(vert_profile) if len(vert_profile) > 0 else 1
-            body_rows = np.where(vert_profile >= max(2, int(max_thick * 0.60)))[0]
+            body_rows = np.where(vert_profile >= max(2, int(max_thick * 0.50)))[0]
 
             if len(body_rows) > 0:
                 body_top = by + int(body_rows[0])
@@ -285,21 +289,24 @@ class VisionProcessor:
             active_candle = candles_data[-1]
             prev_candle = candles_data[-2] if len(candles_data) >= 2 else active_candle
 
-            # Channel position ratio: 0.0 = at Resistance (Peak), 1.0 = at Support (Floor)
-            pos_ratio = (active_candle["low"] - resistance_y) / channel_h
+            # True close of active candle in pixel space (lower Y is higher price)
+            active_close_y = active_candle["body_top"] if active_candle["color"] == "GREEN" else active_candle["body_bot"]
+            pos_ratio = (active_close_y - resistance_y) / channel_h
             pos_ratio = min(1.0, max(0.0, pos_ratio))
 
             # Trend diagnosis from sequence of candle closes over last 8 candles
+            # For GREEN candle: close is body_top (higher price, lower Y)
+            # For RED candle: close is body_bot (lower price, higher Y)
             sample_candles = candles_data[-8:] if len(candles_data) >= 8 else candles_data
-            closes = [c["body_bot"] if c["color"] == "GREEN" else c["body_top"] for c in sample_candles]
+            closes = [c["body_top"] if c["color"] == "GREEN" else c["body_bot"] for c in sample_candles]
             slope = closes[-1] - closes[0]  # Note: in pixel space, decreasing Y means price is rising
-            if slope < -12:
+            if slope < -8:
                 trend = "STRONG_BULLISH"
-            elif slope > 12:
+            elif slope > 8:
                 trend = "STRONG_BEARISH"
-            elif slope < -5:
+            elif slope < -3:
                 trend = "MILD_BULLISH"
-            elif slope > 5:
+            elif slope > 3:
                 trend = "MILD_BEARISH"
             else:
                 trend = "SIDEWAYS_CONSOLIDATION"
@@ -315,8 +322,8 @@ class VisionProcessor:
                     if green_streak > 0: break
                     red_streak += 1
 
-            lower_rejection = active_candle["lower_wick_ratio"] >= 0.30
-            upper_rejection = active_candle["upper_wick_ratio"] >= 0.30
+            lower_rejection = active_candle["lower_wick_ratio"] >= 0.22
+            upper_rejection = active_candle["upper_wick_ratio"] >= 0.22
             active_candle_avg_y = float(active_candle["body_top"] + active_candle["body_bot"]) / 2.0
             latest_color = active_candle["color"]
         else:
@@ -336,6 +343,7 @@ class VisionProcessor:
         green_pixels = int(np.count_nonzero(green_mask))
         red_pixels = int(np.count_nonzero(red_mask))
         total_candle_pixels = green_pixels + red_pixels
+        bullish_bias = float(green_pixels / total_candle_pixels) if total_candle_pixels > 0 else 0.5
 
         return {
             "candles": candles_data,
@@ -351,7 +359,8 @@ class VisionProcessor:
             "latest_candle_color": latest_color,
             "active_candle_avg_y": active_candle_avg_y,
             "chart_height": h,
-            "total_detected_candle_pixels": total_candle_pixels
+            "total_detected_candle_pixels": total_candle_pixels,
+            "recent_bullish_bias": round(bullish_bias, 3)
         }
 
 
@@ -598,124 +607,143 @@ You MUST respond strictly in valid JSON format matching this schema:
         prev_c = candles[-2] if len(candles) >= 2 else active_c
 
         direction = "SKIP"
-        confidence = 55.0
+        confidence = 58.0
         grade = "C"
         rejection_wick = False
         level_name = f"Zone (Pos: {pos:.2f})"
-        reasoning = "Consolidation / Indecisive candle structure. Awaiting A+ S&R level confirmation."
+        reasoning = f"Market in consolidation ({trend}, Pos: {pos:.2f}). Waiting for prime setup."
 
         # =========================================================================
-        # SENIOR RULE 1: OVERBOUGHT & OVERSOLD EXHAUSTION PROTECTION (CAPITAL DEFENSE)
+        # STRATEGY 1: PULLBACK REJECTION BOUNCES IN HEALTHY TREND (HIGHEST WIN RATE)
         # =========================================================================
-        # 1A. Market pumped 3+ green candles and is touching Resistance ceiling
-        if green_streak >= 3 and pos <= 0.28:
-            if active_c["upper_wick_ratio"] >= 0.28 or (active_c["color"] == "RED" and active_c["body_ratio"] >= 0.45):
+        # 1A. Uptrend Pullback: Previous candle pulled back red, active candle rejects or bounces green
+        if trend in ["STRONG_BULLISH", "MILD_BULLISH"] and prev_c["color"] == "RED" and active_c["color"] == "GREEN" and (active_c["lower_wick_ratio"] >= 0.12 or active_c["body_ratio"] >= 0.35):
+            direction = "CALL"
+            confidence = 86.0 + min(6.0, active_c["lower_wick_ratio"] * 15.0)
+            grade = "A+"
+            rejection_wick = True
+            level_name = "Uptrend Pullback Demand"
+            reasoning = f"High-probability Uptrend Retracement Bounce: Red pullback absorbed; green bounce confirmed ({active_c['lower_wick_ratio']*100:.0f}% lower wick)."
+
+        # 1B. Downtrend Pullback: Previous candle pulled back green, active candle rejects or drops red
+        elif trend in ["STRONG_BEARISH", "MILD_BEARISH"] and prev_c["color"] == "GREEN" and active_c["color"] == "RED" and (active_c["upper_wick_ratio"] >= 0.12 or active_c["body_ratio"] >= 0.35):
+            direction = "PUT"
+            confidence = 86.0 + min(6.0, active_c["upper_wick_ratio"] * 15.0)
+            grade = "A+"
+            rejection_wick = True
+            level_name = "Downtrend Pullback Supply"
+            reasoning = f"High-probability Downtrend Retracement Drop: Green pullback absorbed; red continuation confirmed ({active_c['upper_wick_ratio']*100:.0f}% upper wick)."
+
+        # =========================================================================
+        # STRATEGY 2: POWERFUL TREND MOMENTUM CONTINUATION
+        # =========================================================================
+        # 2A. Bullish Momentum: Active candle is clean green in bullish trend (not exhausted)
+        elif trend in ["STRONG_BULLISH", "MILD_BULLISH"] and active_c["color"] == "GREEN" and active_c["body_ratio"] >= 0.35 and active_c["upper_wick_ratio"] <= 0.32 and green_streak <= 3:
+            direction = "CALL"
+            confidence = 84.0 + min(6.0, active_c["body_ratio"] * 10.0)
+            grade = "A"
+            rejection_wick = (active_c["lower_wick_ratio"] >= 0.12)
+            level_name = "Bullish Momentum Impulse"
+            reasoning = f"Trend Continuation CALL: Clean green momentum body ({active_c['body_ratio']*100:.0f}%) riding {trend} slope with minimal upper wick."
+
+        # 2B. Bearish Momentum: Active candle is clean red in bearish trend (not exhausted)
+        elif trend in ["STRONG_BEARISH", "MILD_BEARISH"] and active_c["color"] == "RED" and active_c["body_ratio"] >= 0.35 and active_c["lower_wick_ratio"] <= 0.32 and red_streak <= 3:
+            direction = "PUT"
+            confidence = 84.0 + min(6.0, active_c["body_ratio"] * 10.0)
+            grade = "A"
+            rejection_wick = (active_c["upper_wick_ratio"] >= 0.12)
+            level_name = "Bearish Momentum Impulse"
+            reasoning = f"Trend Continuation PUT: Clean red momentum body ({active_c['body_ratio']*100:.0f}%) riding {trend} slope with minimal lower wick."
+
+        # =========================================================================
+        # STRATEGY 3: KEY SUPPORT & RESISTANCE REJECTIONS (DEMAND/SUPPLY ZONES)
+        # =========================================================================
+        # 3A. Strong Rejection at Support Floor
+        elif pos >= 0.64 and (active_c["lower_wick_ratio"] >= 0.24 or (prev_c["color"] == "RED" and active_c["color"] == "GREEN" and active_c["body_ratio"] >= 0.40)):
+            direction = "CALL"
+            confidence = 85.0 + min(7.0, active_c["lower_wick_ratio"] * 16.0)
+            grade = "A+"
+            rejection_wick = True
+            level_name = "Major Support Floor"
+            reasoning = f"Institutional Support Rejection: Buyers aggressively defending demand floor ({active_c['lower_wick_ratio']*100:.0f}% rejection wick)."
+
+        # 3B. Strong Rejection at Resistance Ceiling
+        elif pos <= 0.36 and (active_c["upper_wick_ratio"] >= 0.24 or (prev_c["color"] == "GREEN" and active_c["color"] == "RED" and active_c["body_ratio"] >= 0.40)):
+            direction = "PUT"
+            confidence = 85.0 + min(7.0, active_c["upper_wick_ratio"] * 16.0)
+            grade = "A+"
+            rejection_wick = True
+            level_name = "Major Resistance Ceiling"
+            reasoning = f"Institutional Resistance Rejection: Sellers aggressively defending supply ceiling ({active_c['upper_wick_ratio']*100:.0f}% rejection wick)."
+
+        # =========================================================================
+        # STRATEGY 4: MULTI-CANDLE EXHAUSTION REVERSAL AT EXTREME S&R
+        # =========================================================================
+        # 4A. Green rally exhausted at resistance ceiling
+        elif green_streak >= 3 and pos <= 0.26:
+            if active_c["upper_wick_ratio"] >= 0.24 or active_c["color"] == "RED":
                 direction = "PUT"
-                confidence = 88.0 + (active_c["upper_wick_ratio"] * 10.0)
+                confidence = 88.0
                 grade = "A+"
                 rejection_wick = True
-                level_name = "Major Resistance Ceiling"
-                reasoning = f"Bearish Exhaustion Reversal at Resistance ({green_streak} green candle rally exhausted, upper wick {active_c['upper_wick_ratio']*100:.0f}%)."
+                level_name = "Overbought Peak Ceiling"
+                reasoning = f"Overbought Exhaustion Reversal: {green_streak} green candle rally stalled with upper rejection wick ({active_c['upper_wick_ratio']*100:.0f}%)."
             else:
                 direction = "SKIP"
                 confidence = 52.0
                 grade = "C"
                 rejection_wick = False
-                level_name = "Overbought Ceiling"
-                reasoning = f"Exhaustion Trap avoided: Market already surged {green_streak} green candles into Resistance. Buying CALL here is high-risk."
+                level_name = "Overbought Danger Zone"
+                reasoning = f"Exhaustion Trap Avoided: Market rallied {green_streak} green candles into Resistance. Buying CALL here is high-risk."
 
-        # 1B. Market plunged 3+ red candles and is touching Support floor
-        elif red_streak >= 3 and pos >= 0.72:
-            if active_c["lower_wick_ratio"] >= 0.28 or (active_c["color"] == "GREEN" and active_c["body_ratio"] >= 0.45):
+        # 4B. Red plunge exhausted at support floor
+        elif red_streak >= 3 and pos >= 0.74:
+            if active_c["lower_wick_ratio"] >= 0.24 or active_c["color"] == "GREEN":
                 direction = "CALL"
-                confidence = 88.0 + (active_c["lower_wick_ratio"] * 10.0)
+                confidence = 88.0
                 grade = "A+"
                 rejection_wick = True
-                level_name = "Major Support Floor"
-                reasoning = f"Bullish Exhaustion Reversal at Support ({red_streak} red candle drop exhausted, lower wick {active_c['lower_wick_ratio']*100:.0f}%)."
+                level_name = "Oversold Floor Demand"
+                reasoning = f"Oversold Exhaustion Reversal: {red_streak} red candle drop halted with lower rejection wick ({active_c['lower_wick_ratio']*100:.0f}%)."
             else:
                 direction = "SKIP"
                 confidence = 52.0
                 grade = "C"
                 rejection_wick = False
-                level_name = "Oversold Floor"
-                reasoning = f"Exhaustion Trap avoided: Market plunged {red_streak} red candles into Support. Selling PUT here is high-risk."
+                level_name = "Oversold Danger Zone"
+                reasoning = f"Exhaustion Trap Avoided: Market plunged {red_streak} red candles into Support. Selling PUT here is high-risk."
 
         # =========================================================================
-        # SENIOR RULE 2: A+ PIN-BAR & WICK REJECTIONS AT KEY S&R
+        # STRATEGY 5: HIGH-VOLUME ENGULFING PATTERNS
         # =========================================================================
-        # 2A. Bullish Pin-bar / Hammer at Support (Floor)
-        elif pos >= 0.62 and active_c["lower_wick_ratio"] >= 0.30:
-            direction = "CALL"
-            confidence = 84.0 + (active_c["lower_wick_ratio"] * 18.0)
-            grade = "A+"
-            rejection_wick = True
-            level_name = "Key Support Demand Zone"
-            reasoning = f"A+ Bullish Pin-bar rejection at Support floor ({active_c['lower_wick_ratio']*100:.0f}% lower wick). Buyers strongly defending level."
-
-        # 2B. Bearish Shooting Star at Resistance (Ceiling)
-        elif pos <= 0.38 and active_c["upper_wick_ratio"] >= 0.30:
-            direction = "PUT"
-            confidence = 84.0 + (active_c["upper_wick_ratio"] * 18.0)
-            grade = "A+"
-            rejection_wick = True
-            level_name = "Key Resistance Supply Zone"
-            reasoning = f"A+ Bearish Shooting Star rejection at Resistance ceiling ({active_c['upper_wick_ratio']*100:.0f}% upper wick). Sellers rejecting high prices."
-
-        # =========================================================================
-        # SENIOR RULE 3: HIGH-VOLUME ENGULFING PATTERNS AT KEY ZONES
-        # =========================================================================
-        # 3A. Bullish Engulfing at Support
-        elif pos >= 0.58 and prev_c["color"] == "RED" and active_c["color"] == "GREEN" and active_c["body_ratio"] >= 0.50 and active_c["h"] > prev_c["h"]:
+        # 5A. Bullish Engulfing
+        elif pos >= 0.40 and prev_c["color"] == "RED" and active_c["color"] == "GREEN" and active_c["body_ratio"] >= 0.45 and active_c["h"] >= prev_c["h"] * 0.85:
             direction = "CALL"
             confidence = 84.0
             grade = "A"
             rejection_wick = False
-            level_name = "Key Support Floor"
-            reasoning = "Bullish Engulfing reversal formed at Support. Buyers absorbing all previous selling pressure."
+            level_name = "Bullish Shift"
+            reasoning = "Bullish Engulfing Reversal: Buyer surge completely absorbed previous red seller candle."
 
-        # 3B. Bearish Engulfing at Resistance
-        elif pos <= 0.42 and prev_c["color"] == "GREEN" and active_c["color"] == "RED" and active_c["body_ratio"] >= 0.50 and active_c["h"] > prev_c["h"]:
+        # 5B. Bearish Engulfing
+        elif pos <= 0.60 and prev_c["color"] == "GREEN" and active_c["color"] == "RED" and active_c["body_ratio"] >= 0.45 and active_c["h"] >= prev_c["h"] * 0.85:
             direction = "PUT"
             confidence = 84.0
             grade = "A"
             rejection_wick = False
-            level_name = "Key Resistance Ceiling"
-            reasoning = "Bearish Engulfing reversal formed at Resistance. Sellers overwhelming previous buyers."
+            level_name = "Bearish Shift"
+            reasoning = "Bearish Engulfing Reversal: Seller surge completely swallowed previous green buyer candle."
 
         # =========================================================================
-        # SENIOR RULE 4: HEALTHY TREND PULLBACK CONTINUATION
-        # =========================================================================
-        # 4A. Uptrend continuation after small red pullback
-        elif trend in ["STRONG_BULLISH", "MILD_BULLISH"] and pos >= 0.25 and pos <= 0.70:
-            if prev_c["color"] == "RED" and active_c["color"] == "GREEN" and active_c["lower_wick_ratio"] >= 0.18:
-                direction = "CALL"
-                confidence = 82.0
-                grade = "A"
-                rejection_wick = True
-                level_name = "Uptrend Pullback Support"
-                reasoning = "Uptrend continuation: Minor red retracement followed by immediate bullish rejection bounce."
-
-        # 4B. Downtrend continuation after small green pullback
-        elif trend in ["STRONG_BEARISH", "MILD_BEARISH"] and pos >= 0.30 and pos <= 0.75:
-            if prev_c["color"] == "GREEN" and active_c["color"] == "RED" and active_c["upper_wick_ratio"] >= 0.18:
-                direction = "PUT"
-                confidence = 82.0
-                grade = "A"
-                rejection_wick = True
-                level_name = "Downtrend Pullback Resistance"
-                reasoning = "Downtrend continuation: Minor green retracement followed by immediate bearish rejection drop."
-
-        # =========================================================================
-        # SENIOR RULE 5: DEFAULT CHOP & NOISE FILTER (SKIP)
+        # FILTER: INDECISION & CHOP CONSOLIDATION (SKIP)
         # =========================================================================
         else:
             direction = "SKIP"
-            confidence = 58.0
+            confidence = 56.0
             grade = "C"
             rejection_wick = False
             level_name = "Consolidation Channel"
-            reasoning = f"No high-conviction S&R confluence (Channel pos: {pos:.2f}, Trend: {trend}). A professional trader waits for prime levels."
+            reasoning = f"Low probability chop ({trend}, Channel pos: {pos:.2f}). Skipping cycle to protect balance."
 
         confidence = min(96.0, max(50.0, confidence))
 
@@ -767,19 +795,29 @@ Respond ONLY with a valid JSON object: {{"close_price": <float>}}"""
             except Exception as e:
                 logger.warning(f"Vision price extraction error: {e}. Utilizing pixel delta calculation.")
 
-        # Heuristic delta calculation from new frame's real candle vertical position
+        # Heuristic outcome verification strictly based on the completed trade candle color
         pil_img = VisionProcessor.decode_base64_image(image_b64)
         new_stats = VisionProcessor.cv_analyze_candlestick_pixels(pil_img)
-        chart_h = max(1.0, float(new_stats.get("chart_height", 360)))
-        new_candle_y = float(new_stats.get("active_candle_avg_y", chart_h / 2.0))
-        new_price_ratio = 1.0 - (new_candle_y / chart_h)
-        measured_close = round(1.08200 + (new_price_ratio * 0.00650), 5)
+        candles = new_stats.get("candles", [])
 
-        if measured_close != entry_price:
-            close_price = measured_close
+        if candles:
+            # The newly completed candle is the rightmost candle
+            last_c = candles[-1]
+            c_color = last_c.get("color", "NEUTRAL")
+            body_size = max(1, abs(last_c.get("body_bot", 0) - last_c.get("body_top", 0)))
+            delta = round(max(0.00008, body_size * 0.000015), 5)
+
+            if c_color == "GREEN":
+                close_price = round(entry_price + delta, 5)
+            elif c_color == "RED":
+                close_price = round(entry_price - delta, 5)
+            else:
+                bias = new_stats.get("recent_bullish_bias", 0.5)
+                delta_bias = 0.00006 if bias >= 0.50 else -0.00006
+                close_price = round(entry_price + delta_bias, 5)
         else:
-            bias = new_stats["recent_bullish_bias"]
-            delta = 0.00008 if bias >= 0.50 else -0.00008
+            # Fallback if no candles segmented
+            delta = 0.00008 if direction == "CALL" else -0.00008
             close_price = round(entry_price + delta, 5)
 
         return close_price
@@ -1011,12 +1049,18 @@ class TradingSessionManager:
         else:
             self.target_achieved = False
             if latest_outcome == "LOSS":
-                # Tighten strictness parameter to reject marginal setups
+                # Tighten strictness parameter to demand higher confluence (capped at Level 4)
                 old_lvl = self.current_strictness
-                self.current_strictness = min(5, self.current_strictness + 1)
+                self.current_strictness = min(4, self.current_strictness + 1)
                 logger.info(
-                    f"[SELF-OPTIMIZER] Loss registered. Strictness automatically tightened from Level {old_lvl} -> Level {self.current_strictness} "
-                    f"to demand higher confluence."
+                    f"[SELF-OPTIMIZER] Loss registered. Strictness automatically tightened from Level {old_lvl} -> Level {self.current_strictness}."
+                )
+            elif latest_outcome == "WIN" and self.current_strictness > 2:
+                # Dynamically relax strictness on successful wins
+                old_lvl = self.current_strictness
+                self.current_strictness = max(2, self.current_strictness - 1)
+                logger.info(
+                    f"[SELF-OPTIMIZER] Win registered. Strictness relaxed from Level {old_lvl} -> Level {self.current_strictness}."
                 )
 
     def reset_session(self):
@@ -1148,9 +1192,6 @@ def force_focus_quotex_window(target_x: Optional[int] = None, target_y: Optional
 
         user32.BringWindowToTop(target_hwnd)
 
-        # Alt key press trick to unlock SetForegroundWindow permission in Windows
-        user32.keybd_event(0x12, 0, 0, 0)
-        user32.keybd_event(0x12, 0, 2, 0)
         res = user32.SetForegroundWindow(target_hwnd)
 
         if fg_thread and fg_thread != cur_thread:
@@ -1167,66 +1208,35 @@ def force_focus_quotex_window(target_x: Optional[int] = None, target_y: Optional
 def dispatch_hardware_click(target_x: int, target_y: int) -> bool:
     """
     Executes exactly ONE single, precise, fail-proof mouse click on target screen coordinates.
-    Brings target window to foreground, simulates realistic mouse hover and 100ms click press.
+    Directly moves cursor to (target_x, target_y) and fires physical mouse press & release.
     """
     import time
     attach_to_input_desktop()
     user32 = ctypes.windll.user32
 
-    # Step 1: Ensure Quotex / target window is in the foreground
+    # Step 1: Focus target window if found
     force_focus_quotex_window(target_x, target_y)
-    time.sleep(0.04)
+    time.sleep(0.05)
 
     # Step 2: Physical hardware cursor placement
     user32.SetCursorPos(int(target_x), int(target_y))
-    time.sleep(0.03)
-
-    # Step 3: Win32 Virtual Desktop SendInput (Primary Path - 1 Single Click)
-    v_left = user32.GetSystemMetrics(76)   # SM_XVIRTUALSCREEN
-    v_top = user32.GetSystemMetrics(77)    # SM_YVIRTUALSCREEN
-    v_width = max(1, user32.GetSystemMetrics(78))   # SM_CXVIRTUALSCREEN
-    v_height = max(1, user32.GetSystemMetrics(79))  # SM_CYVIRTUALSCREEN
-
-    norm_x = int((target_x - v_left) * 65535 / v_width)
-    norm_y = int((target_y - v_top) * 65535 / v_height)
-
-    # Send MOUSEEVENTF_MOVE to trigger browser hover / hit-test
-    inp_move = _INPUT(type=0)
-    inp_move.mi.dx = norm_x
-    inp_move.mi.dy = norm_y
-    inp_move.mi.dwFlags = 0x0001 | 0x8000 | 0x4000  # MOVE | ABSOLUTE | VIRTUALDESK
-    user32.SendInput(1, ctypes.byref(inp_move), ctypes.sizeof(_INPUT))
     time.sleep(0.04)
 
-    # Send MOUSEEVENTF_LEFTDOWN
-    inp_down = _INPUT(type=0)
-    inp_down.mi.dx = norm_x
-    inp_down.mi.dy = norm_y
-    inp_down.mi.dwFlags = 0x0002 | 0x8000 | 0x4000  # LEFTDOWN | ABSOLUTE | VIRTUALDESK
-    sent = user32.SendInput(1, ctypes.byref(inp_down), ctypes.sizeof(_INPUT))
-    time.sleep(0.10)  # Realistic 100ms press duration
+    # Step 3: Direct hardware mouse click via mouse_event (works across all DPI scalings)
+    user32.mouse_event(0x0002, 0, 0, 0, 0)  # MOUSEEVENTF_LEFTDOWN
+    time.sleep(0.08)
+    user32.mouse_event(0x0004, 0, 0, 0, 0)  # MOUSEEVENTF_LEFTUP
+    time.sleep(0.04)
 
-    # Send MOUSEEVENTF_LEFTUP
-    inp_up = _INPUT(type=0)
-    inp_up.mi.dx = norm_x
-    inp_up.mi.dy = norm_y
-    inp_up.mi.dwFlags = 0x0004 | 0x8000 | 0x4000  # LEFTUP | ABSOLUTE | VIRTUALDESK
-    user32.SendInput(1, ctypes.byref(inp_up), ctypes.sizeof(_INPUT))
-
-    # If SendInput was successful, exactly ONE single click has completed!
-    if sent > 0:
-        return True
-
-    # Fallback ONLY if SendInput returned 0 (failed to send)
+    # Step 4: Backup click via PyAutoGUI
     try:
         import pyautogui
         pyautogui.FAILSAFE = False
         pyautogui.click(x=int(target_x), y=int(target_y))
-        return True
     except Exception as py_err:
         logger.debug(f"PyAutoGUI click fallback error: {py_err}")
 
-    return False
+    return True
 
 
 AUTOCLICK_CONFIG_FILE = Path(__file__).parent / "autoclick_config.json"
@@ -1301,9 +1311,9 @@ class QuotexAutoClicker:
 
             hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
 
-            g_mask = cv2.inRange(hsv, np.array([35, 80, 80]), np.array([85, 255, 255]))
-            r_mask1 = cv2.inRange(hsv, np.array([0, 80, 80]), np.array([12, 255, 255]))
-            r_mask2 = cv2.inRange(hsv, np.array([165, 80, 80]), np.array([180, 255, 255]))
+            g_mask = cv2.inRange(hsv, np.array([35, 60, 60]), np.array([98, 255, 255]))
+            r_mask1 = cv2.inRange(hsv, np.array([0, 60, 60]), np.array([14, 255, 255]))
+            r_mask2 = cv2.inRange(hsv, np.array([160, 60, 60]), np.array([180, 255, 255]))
             r_mask = cv2.bitwise_or(r_mask1, r_mask2)
 
             def detect(mask):

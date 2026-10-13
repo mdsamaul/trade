@@ -1752,10 +1752,10 @@
       }
 
       // Senior Trader Precision Timing:
-      // At second 58 (secondsLeft === 2), the current 1-minute candle is 97% formed.
-      // We trigger analysis and click execution so the trade enters right at the candle boundary (second 59/00)!
+      // In the final 3 seconds of the candle (secondsLeft <= 3 && secondsLeft >= 1), the current candle is formed.
+      // We trigger analysis and click execution once per candle bucket right at candle boundary!
       const currentBucket = Math.floor(now.getTime() / (candleTimeframe * 1000));
-      if (autoTradingActive && secondsLeft === 2 && lastScanBucket !== currentBucket && !isCycleBusy) {
+      if (autoTradingActive && secondsLeft <= 3 && secondsLeft >= 1 && lastScanBucket !== currentBucket && !isCycleBusy) {
         lastScanBucket = currentBucket;
         executeCycle();
       }

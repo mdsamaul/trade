@@ -1,8 +1,8 @@
 {
-  "enabled": false,
-  "call_x": 4482,
-  "call_y": 486,
-  "put_x": 4442,
-  "put_y": 531,
+  "enabled": true,
+  "call_x": 1788,
+  "call_y": 483,
+  "put_x": 1769,
+  "put_y": 534,
   "restore_cursor": false
 }
